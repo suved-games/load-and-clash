@@ -42,6 +42,7 @@
 }
 .guide .keys li { display: flex; align-items: center; gap: 10px; }
 .guide kbd { display: inline-block; }
+.guide .keys-note { margin-top: 12px; max-width: 62ch; color: var(--muted); font-size: 15px; }
 
 @media (max-width: 640px) {
   .guide { gap: 26px; padding-top: 16px; }
@@ -54,12 +55,12 @@
   :root {
     color-scheme: light;
     --bg: #ffffff;
-    --surface: #f1f2fa;
-    --surface-2: #e3e6f6;
-    --line: #c9cee8;
+    --surface: #f4f4f6;
+    --surface-2: #e9e9ed;
+    --line: #d3d3da;
     --field: #ffffff;
-    --text: #14172b;
-    --muted: #4a5078;
+    --text: #1b1b20;
+    --muted: #55576a;
   }
   html, body { background: #fff; }
   body { color: var(--text); font-size: 13px; line-height: 1.4; }

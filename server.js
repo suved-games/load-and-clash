@@ -38,6 +38,8 @@ const TRUST_PROXY = Boolean(process.env.TRUST_PROXY || process.env.RENDER);
 const MAX_ROOMS = 5000;
 const ROOM_IDLE_MS = 3 * 60 * 60 * 1000; // drop rooms nobody has touched for 3 hours
 const POLL_GRACE_MS = 5000; // a polling player counts as connected for this long after their last poll
+const GUEST_AWAY_MS = Number(process.env.GUEST_AWAY_MS) || 2 * 60 * 1000; // a guest who vanishes from the waiting room loses their seat after this long
+const CLOSED_ROOM_MS = 60 * 1000; // how long a room the host closed is kept, so the guest can be told
 const MAX_HISTORY = 200;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I, O, 0, 1
 const CODE_LENGTH = 5;
@@ -85,7 +87,14 @@ function createRoom(hostName) {
     code,
     lastActive: Date.now(),
     players: [host, null],
-    status: 'waiting', // waiting | playing | finished
+    // waiting  = the host is alone in the waiting room
+    // lobby    = both players are in the waiting room; the host starts when the guest is ready
+    // playing  = a match is running
+    // finished = a match just ended (rematch possible)
+    // closed   = the host left, so the room is over
+    status: 'waiting',
+    guestReady: false, // the host counts as ready by being the host
+    guestAwaySince: null, // when the guest was first seen offline in the waiting room
     scores: [0, 0],
     pending: [null, null],
     round: 1,
@@ -109,15 +118,33 @@ function seatOf(room, token) {
   return -1;
 }
 
-function resetMatch(room) {
+function clearGame(room) {
   room.scores = [0, 0];
   room.pending = [null, null];
   room.round = 1;
   room.history = [];
   room.result = null;
   room.rematch = [false, false];
-  room.status = 'playing';
-  room.deadline = null; // the timer tick starts it once both players are connected
+  room.deadline = null;
+}
+
+function resetMatch(room) {
+  clearGame(room);
+  room.status = 'playing'; // the timer tick starts the clock once both players are connected
+}
+
+/** The guest is gone (they left, or never came back): the host is alone again. */
+function removeGuest(room) {
+  room.players[1] = null;
+  room.guestReady = false;
+  room.guestAwaySince = null;
+  room.conn[1] = false;
+  clearGame(room);
+  room.status = 'waiting';
+}
+
+function canStart(room, now = Date.now()) {
+  return room.status === 'lobby' && Boolean(room.players[1]) && room.guestReady && bothConnected(room, now);
 }
 
 // ----------------------------------------------------------- state views ----
@@ -154,12 +181,15 @@ function viewFor(room, seat) {
     status: room.status,
     round: room.round,
     result: !room.result ? null : room.result.winner === seat ? 'win' : 'lose',
+    isHost: seat === 0,
+    canStart: seat === 0 && canStart(room, now), // only ever true for the host
     you: {
       name: me.name,
       score: room.scores[seat],
       locked: room.pending[seat] !== null,
       legal: playing ? legalMoves(room.scores[seat]) : [],
       wantsRematch: room.rematch[seat],
+      ready: seat === 0 ? true : room.guestReady,
     },
     opponent: {
       name: them ? them.name : null,
@@ -168,6 +198,7 @@ function viewFor(room, seat) {
       score: room.scores[opp],
       locked: room.pending[opp] !== null,
       wantsRematch: room.rematch[opp],
+      ready: opp === 0 ? Boolean(them) : room.guestReady,
     },
     history: room.history.map((entry) => historyFor(entry, seat)),
   };
@@ -252,6 +283,20 @@ function updateRoom(room, now = Date.now()) {
     room.deadline = null;
   }
 
+  // A guest who joined the waiting room and then vanished (closed the tab)
+  // should not block the seat forever. After a couple of minutes the seat is freed.
+  if (room.status === 'lobby') {
+    if (!conn[1]) {
+      if (room.guestAwaySince === null) room.guestAwaySince = now;
+      else if (now - room.guestAwaySince >= GUEST_AWAY_MS) {
+        removeGuest(room);
+        changed = true;
+      }
+    } else {
+      room.guestAwaySince = null;
+    }
+  }
+
   if (changed) broadcast(room);
 }
 
@@ -320,7 +365,7 @@ function allowCreate(ip) {
 
 function getRoom(code) {
   const room = rooms.get(String(code).toUpperCase());
-  if (!room) throw new HttpError(404, 'Room not found. Check the code and try again.');
+  if (!room || room.status === 'closed') throw new HttpError(404, 'Room not found. Check the code and try again.');
   return room;
 }
 
@@ -350,16 +395,26 @@ async function handleApi(req, res, url) {
     return json(res, 201, { code: room.code, token: player.token, seat: 0 });
   }
 
-  const match = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(events|state|join|move|rematch))?$/);
+  const match = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(events|state|join|move|rematch|ready|start|leave))?$/);
   if (!match) throw new HttpError(404, 'Not found.');
   const [, rawCode, action] = match;
   const code = rawCode.toUpperCase();
   if (!CODE_RE.test(code)) throw new HttpError(404, 'Room not found. Check the code and try again.');
+
+  // A closed room is still told to its guest through the open stream, but
+  // nobody can use it any more.
   const room = getRoom(code);
 
-  // Is the room there, and does it have space? Used by invite links.
+  // Is the room there, and does it have space? Used by invite links. With a
+  // token it also says whether that token still has a seat in the room.
   if (!action && method === 'GET') {
-    return json(res, 200, { code: room.code, status: room.status, full: Boolean(room.players[1]) });
+    const token = url.searchParams.get('token');
+    return json(res, 200, {
+      code: room.code,
+      status: room.status,
+      full: Boolean(room.players[1]),
+      seated: token ? seatOf(room, token) !== -1 : undefined,
+    });
   }
 
   if (action === 'join' && method === 'POST') {
@@ -367,9 +422,51 @@ async function handleApi(req, res, url) {
     const body = await readJson(req);
     const guest = makePlayer(cleanName(body.name, 'Player 2'));
     room.players[1] = guest;
-    resetMatch(room);
+    room.guestReady = false;
+    room.guestAwaySince = null;
+    clearGame(room);
+    room.status = 'lobby'; // the host starts the match once the guest is ready
     broadcast(room);
     return json(res, 200, { code: room.code, token: guest.token, seat: 1 });
+  }
+
+  // The guest says they are ready (or not ready) in the waiting room.
+  if (action === 'ready' && method === 'POST') {
+    const body = await readJson(req);
+    const seat = requireSeat(room, body.token);
+    if (seat === 0) throw new HttpError(403, 'The host does not need to get ready. Start the match when your opponent is ready.');
+    if (room.status !== 'lobby') throw new HttpError(409, 'You can only change this in the waiting room.');
+    if (typeof body.ready !== 'boolean') throw new HttpError(400, 'Say whether you are ready.');
+    room.guestReady = body.ready;
+    broadcast(room);
+    return json(res, 200, { ok: true });
+  }
+
+  // Only the host can start the match, and only when the guest is ready.
+  if (action === 'start' && method === 'POST') {
+    const body = await readJson(req);
+    const seat = requireSeat(room, body.token);
+    if (seat !== 0) throw new HttpError(403, 'Only the host can start the match.');
+    if (room.status !== 'lobby') throw new HttpError(409, 'The match cannot be started right now.');
+    if (!room.guestReady) throw new HttpError(409, `${room.players[1].name} is not ready yet.`);
+    if (!bothConnected(room)) throw new HttpError(409, `${room.players[1].name} is offline. Wait until they are back.`);
+    resetMatch(room);
+    broadcast(room);
+    return json(res, 200, { ok: true });
+  }
+
+  // Leave for good. The guest frees their seat; the host closes the room.
+  if (action === 'leave' && method === 'POST') {
+    const body = await readJson(req);
+    const seat = requireSeat(room, body.token);
+    if (seat === 0) {
+      room.status = 'closed';
+      room.deadline = null;
+    } else {
+      removeGuest(room);
+    }
+    broadcast(room);
+    return json(res, 200, { ok: true });
   }
 
   if (action === 'events' && method === 'GET') {
@@ -538,7 +635,8 @@ const sweeper = setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     const connected = room.players.some((p) => isConnected(p, now));
-    if (!connected && now - room.lastActive > ROOM_IDLE_MS) rooms.delete(code);
+    if (room.status === 'closed' && now - room.lastActive > CLOSED_ROOM_MS) rooms.delete(code);
+    else if (!connected && now - room.lastActive > ROOM_IDLE_MS) rooms.delete(code);
   }
 }, 5 * 60 * 1000);
 keepAlive.unref();

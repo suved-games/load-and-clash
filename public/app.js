@@ -24,6 +24,18 @@ const KEYS = {
 };
 const MOVE_BY_KEY = Object.fromEntries(Object.entries(KEYS).map(([id, key]) => [key, id]));
 
+// Keys that open and close the two drop-down menus.
+const MENU_KEYS = { def: 'z', atk: 'x' };
+const MENU_BY_KEY = Object.fromEntries(Object.entries(MENU_KEYS).map(([group, key]) => [key, group]));
+
+const DOUBLE_MS = 500; // two clicks or taps on the same move within this time lock it in
+const MENU_CLOSE_MS = 600; // a menu closes this long after a move is picked from it
+
+const MENUS = {
+  def: { dd: '#dd-def', trigger: '#trig-def', menu: '#menu-def', pick: '#pick-def', type: 'defense' },
+  atk: { dd: '#dd-atk', trigger: '#trig-atk', menu: '#menu-atk', pick: '#pick-atk', type: 'attack' },
+};
+
 const $ = (selector, root = document) => root.querySelector(selector);
 
 /** Tiny element builder. Text is always set as text, never as HTML. */
@@ -51,10 +63,16 @@ let lastRound = null;
 let lastHistoryLength = 0;
 let busy = false;
 let locking = false;
+let roomBusy = false;
 let offlineSince = null; // when the opponent was first seen offline
 let offlineTimer = null;
 let clockOffset = 0; // server time minus this device's time, in ms
 let timerLoop = null;
+
+// Drop-down menus and double-click.
+let openMenu = null; // 'def' | 'atk' | null
+let menuCloseTimer = null;
+let lastPick = { id: null, at: 0 };
 
 // Connection: a live stream when it works, polling when it does not.
 let stream = null; // EventSource
@@ -71,6 +89,7 @@ let flashTimer = null;
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const moveName = (id) => moveById[id].name;
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ------------------------------------------------------------------ api ----
 
@@ -153,7 +172,7 @@ function parseHash() {
 // ---------------------------------------------------------------- views ----
 
 function showView(name) {
-  for (const view of ['lobby', 'waiting', 'game']) $(`#view-${view}`).hidden = view !== name;
+  for (const view of ['lobby', 'room', 'game']) $(`#view-${view}`).hidden = view !== name;
   const inRoom = name !== 'lobby';
   $('#roomtag').hidden = !inRoom;
   if (inRoom && session) $('#roomcode').textContent = session.code;
@@ -169,6 +188,7 @@ function goToLobby(message) {
   offlineSince = null;
   clearTimeout(offlineTimer);
   offlineTimer = null;
+  closeMenus();
   history.replaceState(null, '', location.pathname);
   $('#conn').hidden = true;
   $('#timer').hidden = true;
@@ -188,6 +208,18 @@ function syncClock(serverNow) {
 function applyState(next) {
   pollVersion = next.version;
   syncClock(next.serverNow);
+
+  if (next.status === 'closed') {
+    goToLobby(`${next.opponent.name || 'The host'} closed the room.`);
+    return;
+  }
+  // The other player left the room (or never came back to the waiting room).
+  if (state && state.opponent.joined && !next.opponent.joined) {
+    notice(`${state.opponent.name} left the room.`);
+  } else if (state && !state.opponent.joined && next.opponent.joined) {
+    notice('');
+  }
+
   state = next;
   render(next);
 }
@@ -253,14 +285,22 @@ function connect() {
 /** A closed stream does not always mean the room is gone: Chrome also reports
  *  it while a page is being refreshed. Ask the server before giving up. */
 async function handleStreamClosed(source) {
-  const code = session && session.code;
-  if (!code) return;
+  const mine = session;
+  if (!mine) return;
   try {
-    const res = await fetch(`/api/rooms/${code}`);
+    const res = await fetch(`/api/rooms/${mine.code}?token=${encodeURIComponent(mine.token)}`);
     if (stream !== source) return;
     if (res.status === 404) {
       goToLobby('That room is no longer available. Create a new one or enter another code.');
       return;
+    }
+    if (res.ok) {
+      const info = await res.json();
+      if (stream !== source) return;
+      if (info.seated === false) {
+        goToLobby('You are no longer in that room. Create a new one or enter another code.');
+        return;
+      }
     }
   } catch {
     /* offline, or the page is unloading: fall through and retry */
@@ -313,7 +353,7 @@ async function pollLoop(mine) {
     if (pollFailures >= 2) $('#conn').hidden = false;
     delay = 2000;
   }
-  pollTimer = setTimeout(() => pollLoop(mine), delay);
+  if (session === mine) pollTimer = setTimeout(() => pollLoop(mine), delay);
 }
 
 function enterRoom(info) {
@@ -378,7 +418,31 @@ async function showInvite(code) {
   }
 }
 
+/** Leave for good: tell the server (the guest frees the seat, the host closes
+ *  the room), then go back to the home screen. */
+function leaveRoom() {
+  const mine = session;
+  const playing = state && state.status === 'playing';
+  if (playing) {
+    const message = state.isHost
+      ? 'Leave this game? The room will close and your opponent will be sent home.'
+      : 'Leave this game? Your opponent will be left waiting.';
+    if (!window.confirm(message)) return;
+  }
+  if (mine) {
+    fetch(`/api/rooms/${mine.code}/leave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: mine.token }),
+      keepalive: true,
+    }).catch(() => {});
+  }
+  goToLobby('');
+}
+
 // -------------------------------------------------------------- meters ----
+// The meter is the picture on the home screen: one notch per score, coloured
+// by the defense that answers the attack unlocked there.
 
 function buildMeter(container) {
   const byValue = new Map(rules.attacks.map((attack) => [attack.value, attack]));
@@ -397,30 +461,12 @@ function buildMeter(container) {
   container.replaceChildren(...cells);
 }
 
-function updateMeter(container, score) {
-  container.setAttribute('aria-label', `Score ${score}`);
-  container.querySelectorAll('.cell').forEach((cell) => {
-    cell.classList.toggle('on', Number(cell.dataset.n) <= score);
-  });
-}
-
-function captionFor(score, isYou) {
-  const unlocked = rules.attacks.filter((a) => a.value <= score);
-  const next = rules.attacks.find((a) => a.value > score);
-  const top = unlocked[unlocked.length - 1];
-  if (!top) {
-    return isYou ? `No attacks yet. ${next.name} unlocks at ${next.value}.` : 'No attacks unlocked yet.';
-  }
-  const base = `Strongest attack: ${top.name}.`;
-  return isYou && next ? `${base} Next: ${next.name} at ${next.value}.` : base;
-}
-
 // Plays once on the home screen: the meter fills so the notches are noticed.
 function playHeroMeter() {
   const meter = $('#hero-meter');
   buildMeter(meter);
   const cells = [...meter.querySelectorAll('.cell')];
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (reducedMotion()) {
     cells.forEach((cell) => cell.classList.add('on'));
     return;
   }
@@ -458,62 +504,108 @@ function keyCap(id) {
   return h('kbd', { 'aria-hidden': 'true', text: KEYS[id].toUpperCase() });
 }
 
-function moveButton(move) {
-  const classes = ['move', move.type];
-  if (move.type === 'defense') classes.push(move.id);
-  const button = h('button', {
-    type: 'button',
-    class: classes.join(' '),
-    'data-move': move.id,
-    'aria-pressed': 'false',
-    'aria-keyshortcuts': KEYS[move.id].toUpperCase(),
-  });
+const chip = (id) => h('span', { class: 'chip' }, h('i', { class: `dot ${id}` }), moveById[id].name);
 
-  if (move.type === 'load') {
-    button.append(h('span', { class: 'move-name', text: move.name }), h('span', { class: 'move-note', text: '+1 point' }), keyCap(move.id));
-  } else if (move.type === 'defense') {
-    button.append(h('span', { class: 'move-head' }, h('span', { class: 'move-name', text: move.name }), keyCap(move.id)));
+function loadButton(move) {
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: 'move load',
+      'data-move': move.id,
+      'aria-pressed': 'false',
+      'aria-keyshortcuts': KEYS[move.id].toUpperCase(),
+    },
+    h('span', { class: 'move-name', text: move.name }),
+    h('span', { class: 'move-note', text: '+1 point' }),
+    keyCap(move.id),
+  );
+}
+
+/** One row of a Defend or Attack menu. */
+function optionFor(move) {
+  const isDefense = move.type === 'defense';
+  const lead = h('span', { class: 'opt-lead' }, isDefense ? h('i', { class: `dot ${move.id}` }) : h('span', { class: 'badge', text: move.value }));
+
+  let sub;
+  if (isDefense) {
+    const answers = rules.attacks.filter((attack) => attack.counters.includes(move.id)).map((attack) => attack.name);
+    sub = h('span', { class: 'opt-sub', text: `Answers ${answers.join(', ')}` });
   } else {
-    const counters = move.counters.map((id) => moveById[id].name);
-    button.setAttribute('aria-label', `${move.name}, unlocks at ${move.value}, answered by ${counters.join(' or ')}`);
-    button.append(
-      h('span', { class: 'move-head' }, h('span', { class: 'move-name', text: move.name }), keyCap(move.id)),
-      h(
-        'span',
-        { class: 'move-sub' },
-        h('span', { class: 'badge', text: move.value }),
-        h(
-          'span',
-          { class: 'chips' },
-          move.counters.map((id) => h('span', { class: 'chip' }, h('i', { class: `dot ${id}` }), moveById[id].name)),
-        ),
-      ),
-      h('span', { class: 'lock-note' }),
-    );
+    sub = h('span', { class: 'opt-sub' }, h('span', { class: 'chips' }, move.counters.map(chip)), h('span', { class: 'lock-note' }));
   }
-  return button;
+
+  const label = isDefense
+    ? move.name
+    : `${move.name}, unlocks at ${move.value}, answered by ${move.counters.map(moveName).join(' or ')}`;
+
+  return h(
+    'button',
+    {
+      type: 'button',
+      role: 'option',
+      class: `move opt ${move.type}${isDefense ? ` ${move.id}` : ''}`,
+      'data-move': move.id,
+      'aria-selected': 'false',
+      'aria-label': label,
+      'aria-keyshortcuts': KEYS[move.id].toUpperCase(),
+      tabindex: '-1',
+    },
+    lead,
+    h('span', { class: 'opt-name', text: move.name }),
+    keyCap(move.id),
+    sub,
+  );
 }
 
 function buildPicker() {
-  $('#g-load').replaceChildren(moveButton(rules.load));
-  $('#g-def').replaceChildren(...rules.defenses.map(moveButton));
-  $('#g-atk').replaceChildren(...rules.attacks.map(moveButton));
+  $('#g-load').replaceChildren(loadButton(rules.load));
+  $(MENUS.def.menu).replaceChildren(...rules.defenses.map(optionFor));
+  $(MENUS.atk.menu).replaceChildren(...rules.attacks.map(optionFor));
+  for (const [group, key] of Object.entries(MENU_KEYS)) {
+    $(`#key-${group}`).textContent = key.toUpperCase();
+    $(MENUS[group].trigger).setAttribute('aria-keyshortcuts', key.toUpperCase());
+  }
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  $('#tip').dataset.text = coarse ? 'Double-tap a move to lock it in.' : 'Double-click a move to lock it in.';
 }
+
+const canActNow = () => Boolean(state) && state.status === 'playing' && !state.you.locked;
 
 function updatePicker(s) {
   const legal = new Set(s.you.legal);
   const canAct = s.status === 'playing' && !s.you.locked;
+
   document.querySelectorAll('#picker .move').forEach((button) => {
     const id = button.dataset.move;
     const move = moveById[id];
-    const scoreLocked = move.type === 'attack' && s.you.score < move.value;
-    button.disabled = !canAct || !legal.has(id);
-    button.classList.toggle('is-locked', scoreLocked && canAct);
-    button.setAttribute('aria-pressed', String(selected === id));
-    if (move.type === 'attack') {
-      $('.lock-note', button).textContent = scoreLocked ? `Needs ${move.value - s.you.score} more` : '';
+    button.disabled = !canAct;
+    if (button.classList.contains('opt')) {
+      // A locked attack stays clickable so that tapping it explains itself.
+      const scoreLocked = move.type === 'attack' && !legal.has(id);
+      button.setAttribute('aria-disabled', String(canAct && scoreLocked));
+      button.setAttribute('aria-selected', String(selected === id));
+      if (move.type === 'attack') {
+        $('.lock-note', button).textContent = scoreLocked ? `Needs ${move.value - s.you.score} more` : '';
+      }
+    } else {
+      button.setAttribute('aria-pressed', String(selected === id));
     }
   });
+
+  for (const [group, menu] of Object.entries(MENUS)) {
+    const pick = selected && moveById[selected].type === menu.type ? selected : null;
+    const dd = $(menu.dd);
+    dd.classList.toggle('has-pick', Boolean(pick));
+    dd.dataset.pick = pick && menu.type === 'defense' ? pick : '';
+    $(menu.pick).textContent = pick ? moveName(pick) : 'Choose';
+    $(menu.pick).classList.toggle('is-empty', !pick);
+    $(menu.trigger).disabled = !canAct;
+    $(menu.trigger).setAttribute('aria-label', `${group === 'def' ? 'Defend' : 'Attack'} menu${pick ? `, ${moveName(pick)} selected` : ''}`);
+  }
+  if (!canAct) closeMenus();
+
+  $('#tip').textContent = canAct ? $('#tip').dataset.text || '' : '';
 
   const lockbar = $('#lockbar');
   lockbar.hidden = s.status !== 'playing';
@@ -540,16 +632,100 @@ function flashSelection(message) {
   }, 1800);
 }
 
+// ---------------------------------------------------------- the menus ----
+
+function menuOptions(group, { usableOnly = false } = {}) {
+  const items = [...document.querySelectorAll(`${MENUS[group].menu} .opt`)];
+  return usableOnly ? items.filter((item) => !item.disabled && item.getAttribute('aria-disabled') !== 'true') : items;
+}
+
+function openMenuFor(group) {
+  if (!canActNow()) return;
+  closeMenus();
+  const parts = MENUS[group];
+  $(parts.menu).hidden = false;
+  $(parts.trigger).setAttribute('aria-expanded', 'true');
+  openMenu = group;
+
+  // Focus the highlighted move (or the first one you can use) so the arrow keys work.
+  const usable = menuOptions(group, { usableOnly: true });
+  const target = usable.find((item) => item.dataset.move === selected) || usable[0] || menuOptions(group)[0];
+  if (target) target.focus({ preventScroll: true });
+  $(parts.menu).scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+}
+
+function closeMenus() {
+  clearTimeout(menuCloseTimer);
+  menuCloseTimer = null;
+  for (const parts of Object.values(MENUS)) {
+    const menu = $(parts.menu);
+    if (!menu.hidden && menu.contains(document.activeElement)) $(parts.trigger).focus({ preventScroll: true });
+    menu.hidden = true;
+    $(parts.trigger).setAttribute('aria-expanded', 'false');
+  }
+  openMenu = null;
+}
+
+function toggleMenu(group) {
+  if (openMenu === group) closeMenus();
+  else openMenuFor(group);
+}
+
+/** Arrow keys inside an open menu: move the highlight, and select that move. */
+function stepMenu(step) {
+  if (!openMenu) return;
+  const items = menuOptions(openMenu, { usableOnly: true });
+  if (!items.length) return;
+  const index = items.indexOf(document.activeElement);
+  // A menu opens with its first move focused but not chosen. The first arrow
+  // press chooses what is focused, so the highlight never skips a move.
+  if (typeof step === 'number' && index !== -1 && items[index].dataset.move !== selected) {
+    chooseMove(items[index].dataset.move);
+    return;
+  }
+  let next;
+  if (step === 'first') next = items[0];
+  else if (step === 'last') next = items[items.length - 1];
+  else if (index === -1) next = step > 0 ? items[0] : items[items.length - 1];
+  else next = items[(index + step + items.length) % items.length];
+  next.focus({ preventScroll: true });
+  chooseMove(next.dataset.move);
+}
+
+function scheduleMenuClose() {
+  clearTimeout(menuCloseTimer);
+  menuCloseTimer = setTimeout(closeMenus, MENU_CLOSE_MS);
+}
+
+// ----------------------------------------------------- choosing a move ----
+
+/** Highlights a move. Returns true when it is now the selected move. */
 function chooseMove(id) {
-  if (!state || state.status !== 'playing' || state.you.locked) return;
+  if (!state || state.status !== 'playing' || state.you.locked) return false;
   const move = moveById[id];
   if (!state.you.legal.includes(id)) {
     flashSelection(`${move.name} unlocks at ${move.value}. Your score is ${state.you.score}.`);
-    return;
+    return false;
   }
   clearTimeout(flashTimer);
   selected = id;
   updatePicker(state);
+  return true;
+}
+
+/** A click or tap on a move. The same move twice within DOUBLE_MS locks it in. */
+function pickWithPointer(id, fromMenu) {
+  const now = performance.now();
+  const twice = lastPick.id === id && now - lastPick.at <= DOUBLE_MS;
+  lastPick = { id, at: now };
+  const chosen = chooseMove(id);
+  if (twice && chosen) {
+    lastPick = { id: null, at: 0 };
+    closeMenus();
+    lockIn();
+    return;
+  }
+  if (fromMenu && chosen) scheduleMenuClose();
 }
 
 async function lockIn() {
@@ -560,6 +736,7 @@ async function lockIn() {
   }
   locking = true;
   notice('');
+  closeMenus();
   $('#btn-lock').disabled = true;
   try {
     await api(`/api/rooms/${session.code}/move`, {
@@ -669,7 +846,8 @@ function statusText(s) {
 /** True only once the opponent has been offline for a few seconds, so the
  *  message doesn't flash while their connection is still opening. */
 function opponentOffline(s) {
-  const offline = s.status === 'playing' && !s.opponent.connected;
+  const watching = s.status === 'playing' || s.status === 'lobby';
+  const offline = watching && s.opponent.joined && !s.opponent.connected;
   if (!offline) {
     offlineSince = null;
     clearTimeout(offlineTimer);
@@ -688,16 +866,22 @@ function opponentOffline(s) {
   return false;
 }
 
+/** The result card: the score as a ratio (you : opponent) and the last round. */
 function renderReveal(s) {
   const last = s.history[s.history.length - 1];
   const reveal = $('#reveal');
-  $('#results-empty').hidden = Boolean(last);
+
+  $('#ratio-you').textContent = s.you.score;
+  $('#ratio-opp').textContent = s.opponent.score;
+  $('#ratio').setAttribute('aria-label', `Score: you ${s.you.score}, ${s.opponent.name} ${s.opponent.score}`);
+  $('#ratio-key').textContent = `You : ${s.opponent.name}`;
+  $('#reveal-title').textContent = last ? `Round ${last.round} result` : 'Score';
+
+  $('#clash').hidden = !last;
   if (!last) {
-    reveal.hidden = true;
+    $('#rv-text').textContent = '';
     return;
   }
-  reveal.hidden = false;
-  $('#reveal-title').textContent = `Round ${last.round} result`;
   $('#rv-opp-name').textContent = s.opponent.name;
   for (const [side, id] of [['you', last.you], ['opp', last.opp]]) {
     const move = $(`#rv-${side}`);
@@ -737,29 +921,76 @@ function renderBanner(s) {
       : '';
 }
 
-function renderLog(s) {
-  const items = s.history
-    .slice()
-    .reverse()
-    .slice(0, 60)
-    .map((entry) =>
-      h(
-        'li',
-        {},
-        h('strong', { text: `Round ${entry.round}. ` }),
-        `${s.you.name}: ${moveName(entry.you)}. ${s.opponent.name}: ${moveName(entry.opp)}. ${describe(entry, s)}`,
-      ),
-    );
-  $('#log').replaceChildren(...items);
-  $('#log-summary').textContent = s.history.length ? `Round log (${s.history.length})` : 'Round log';
+/** The waiting room: who is here, the guest's Ready button, the host's Start button. */
+function renderRoom(s) {
+  showView('room');
+  selected = null;
+  lastRound = null;
+  lastHistoryLength = 0;
+  closeMenus();
+
+  const offline = opponentOffline(s);
+  const isHost = s.isHost;
+  const hostName = isHost ? s.you.name : s.opponent.name;
+  const guestJoined = isHost ? s.opponent.joined : true;
+  const guestName = isHost ? s.opponent.name : s.you.name;
+  const guestReady = isHost ? s.opponent.ready : s.you.ready;
+
+  const link = `${location.origin}/#${s.code}`;
+  $('#waiting-code').textContent = s.code;
+  if ($('#invite-link').value !== link) $('#invite-link').value = link;
+  $('#invite-block').hidden = !isHost; // the guest is already in
+
+  // Host row.
+  $('#pl-host-name').textContent = isHost ? `${hostName} (you)` : hostName;
+  const hostStatus = $('#pl-host-status');
+  const hostAway = !isHost && offline;
+  hostStatus.textContent = hostAway ? 'Offline' : 'Ready';
+  hostStatus.className = `pl-status ${hostAway ? 'away' : 'ready'}`;
+
+  // Guest row.
+  const row = $('#pl-guest');
+  const guestStatus = $('#pl-guest-status');
+  row.classList.toggle('empty', !guestJoined);
+  $('#pl-guest-tag').hidden = !guestJoined;
+  if (!guestJoined) {
+    $('#pl-guest-name').textContent = 'Waiting for a player to join';
+    guestStatus.textContent = '';
+    guestStatus.className = 'pl-status';
+  } else {
+    $('#pl-guest-name').textContent = isHost ? guestName : `${guestName} (you)`;
+    const guestAway = isHost && offline;
+    guestStatus.textContent = guestAway ? 'Offline' : guestReady ? 'Ready' : 'Not ready';
+    guestStatus.className = `pl-status ${guestAway ? 'away' : guestReady ? 'ready' : ''}`;
+  }
+
+  // Buttons and the line of help under them.
+  const readyButton = $('#btn-ready');
+  readyButton.hidden = isHost;
+  readyButton.textContent = s.you.ready ? 'Unready' : 'Ready';
+  readyButton.className = s.you.ready ? 'secondary' : 'primary';
+
+  const startButton = $('#btn-start');
+  startButton.hidden = !isHost;
+  startButton.disabled = !s.canStart;
+
+  let hint;
+  if (isHost) {
+    if (!s.opponent.joined) hint = 'Keep this tab open until your friend joins.';
+    else if (offline) hint = `${s.opponent.name} is offline. You can start when they are back.`;
+    else if (!s.opponent.ready) hint = `Waiting for ${s.opponent.name} to get ready.`;
+    else hint = `${s.opponent.name} is ready. Start when you like.`;
+  } else if (s.you.ready) {
+    hint = `You are ready. Waiting for ${hostName} to start the match.`;
+  } else {
+    hint = `Press Ready when you are set. ${hostName} starts the match.`;
+  }
+  $('#room-hint').textContent = hint;
 }
 
 function render(s) {
-  if (s.status === 'waiting' || !s.opponent.joined) {
-    showView('waiting');
-    $('#waiting-code').textContent = s.code;
-    const link = `${location.origin}/#${s.code}`;
-    if ($('#invite-link').value !== link) $('#invite-link').value = link;
+  if (s.status === 'waiting' || s.status === 'lobby') {
+    renderRoom(s);
     return;
   }
 
@@ -770,15 +1001,6 @@ function render(s) {
   const roundChanged = s.round !== lastRound;
   lastRound = s.round;
 
-  $('#you-name').textContent = `${s.you.name} (you)`;
-  $('#opp-name').textContent = s.opponent.name;
-  $('#you-score').textContent = s.you.score;
-  $('#opp-score').textContent = s.opponent.score;
-  updateMeter($('#you-meter'), s.you.score);
-  updateMeter($('#opp-meter'), s.opponent.score);
-  $('#you-caption').textContent = captionFor(s.you.score, true);
-  $('#opp-caption').textContent = captionFor(s.opponent.score, false);
-
   let status = statusText(s);
   if (opponentOffline(s)) {
     status += ` ${s.opponent.name} is offline. The timer is paused until they are back.`;
@@ -788,8 +1010,8 @@ function render(s) {
   renderReveal(s);
   lastHistoryLength = s.history.length;
   renderBanner(s);
+  if (roundChanged) closeMenus();
   updatePicker(s);
-  renderLog(s);
   updateTimer();
 
   if (roundChanged && s.status === 'playing') notice('');
@@ -798,12 +1020,7 @@ function render(s) {
 // ----------------------------------------------------------------- rules ----
 
 function renderRules() {
-  const chipsFor = (attack) =>
-    h(
-      'span',
-      { class: 'chips' },
-      attack.counters.map((id) => h('span', { class: 'chip' }, h('i', { class: `dot ${id}` }), moveById[id].name)),
-    );
+  const chipsFor = (attack) => h('span', { class: 'chips' }, attack.counters.map(chip));
   const rows = rules.attacks.map((attack) =>
     h('tr', {}, h('td', { text: attack.name }), h('td', { text: attack.value }), h('td', {}, chipsFor(attack))),
   );
@@ -812,8 +1029,10 @@ function renderRules() {
   $('#rules-body').replaceChildren(
     h('h3', { text: 'The basics' }),
     list(
+      'The host creates a room and sends the link. The guest joins, presses Ready, and the host starts the match.',
       'Both players start at 0 and pick a move each round. Moves stay hidden until both players have locked in.',
       'You have 5 seconds each round. If you have not locked in when time runs out, Load is played for you.',
+      'Open the Defend or Attack menu to see every move. Tap a move to highlight it, then press Lock in. Double-click or double-tap a move to lock it in at once.',
       'Load adds 1 point to your score.',
       "You can defend at any time. If you are attacked and use a matching defense, the attacker loses points equal to the attack's number.",
       'If you are attacked and do not use a matching defense, including by loading, you lose.',
@@ -840,6 +1059,7 @@ function renderRules() {
       'Load: L',
       'Defenses: Q Mag, W N.V, E Shield, R Rebound',
       'Attacks: A Path, S Boss, D Dam, F ICY, G Touch E, H Storm, J Beast, K Professor',
+      `Menus: ${MENU_KEYS.def.toUpperCase()} opens the Defend menu, ${MENU_KEYS.atk.toUpperCase()} opens the Attack menu. In a menu, the up and down arrows choose a move and Esc closes it.`,
       'Enter locks in your highlighted move.',
     ),
   );
@@ -868,29 +1088,76 @@ async function copyLink() {
   }, 1800);
 }
 
+// ---------------------------------------------------------- waiting room ----
+
+async function roomAction(action, body = {}) {
+  if (!session || roomBusy) return;
+  roomBusy = true;
+  notice('');
+  try {
+    await api(`/api/rooms/${session.code}/${action}`, { method: 'POST', body: { token: session.token, ...body } });
+  } catch (err) {
+    notice(err.message);
+  } finally {
+    roomBusy = false;
+  }
+}
+
 // ------------------------------------------------------------------ keys ----
 
 function onKeyDown(event) {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target;
   const tag = target && target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SUMMARY' || tag === 'A') return;
   if (target && target.isContentEditable) return;
   if (!state || state.status !== 'playing' || $('#view-game').hidden) return;
 
+  // Keys that work inside an open menu.
+  if (openMenu) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenus();
+      return;
+    }
+    if (event.key === 'Tab') {
+      closeMenus(); // the Tab key then moves on as normal
+      return;
+    }
+    const steps = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' };
+    if (event.key in steps) {
+      event.preventDefault();
+      if (!event.repeat) stepMenu(steps[event.key]);
+      return;
+    }
+  }
+
+  if (event.repeat) return;
+
   if (event.key === 'Enter') {
     // Other buttons (Leave, Play again) keep their normal Enter behaviour.
-    if (tag === 'BUTTON' && !target.classList.contains('move') && target.id !== 'btn-lock') return;
+    const isMoveControl = target && (target.classList.contains('move') || target.classList.contains('dd-trigger') || target.id === 'btn-lock');
+    if (tag === 'BUTTON' && !isMoveControl) return;
     event.preventDefault();
     lockIn();
     return;
   }
 
   if (event.key.length !== 1) return;
-  const id = MOVE_BY_KEY[event.key.toLowerCase()];
+  const key = event.key.toLowerCase();
+
+  const group = MENU_BY_KEY[key];
+  if (group) {
+    event.preventDefault();
+    if (canActNow()) toggleMenu(group);
+    return;
+  }
+
+  const id = MOVE_BY_KEY[key];
   if (!id) return;
   event.preventDefault();
-  chooseMove(id);
+  const chosen = chooseMove(id);
+  if (chosen) closeMenus();
 }
 
 // ------------------------------------------------------------------ init ----
@@ -920,29 +1187,32 @@ function wireEvents() {
 
   $('#btn-copy').addEventListener('click', copyLink);
   $('#invite-link').addEventListener('focus', (event) => event.target.select());
+  $('#btn-leave').addEventListener('click', leaveRoom);
 
-  $('#btn-leave').addEventListener('click', () => {
-    const playing = state && state.status === 'playing';
-    if (playing && !window.confirm('Leave this game? Your opponent will be left waiting.')) return;
-    goToLobby('');
-  });
+  // Waiting room.
+  $('#btn-ready').addEventListener('click', () => roomAction('ready', { ready: !(state && state.you.ready) }));
+  $('#btn-start').addEventListener('click', () => roomAction('start'));
 
+  // Moves: the two menu buttons, and every move inside the picker.
   $('#picker').addEventListener('click', (event) => {
+    const trigger = event.target.closest('.dd-trigger');
+    if (trigger) {
+      if (!trigger.disabled) toggleMenu(trigger.id === 'trig-def' ? 'def' : 'atk');
+      return;
+    }
     const button = event.target.closest('button.move');
     if (!button || button.disabled) return;
-    chooseMove(button.dataset.move);
+    const fromMenu = button.classList.contains('opt');
+    if (!fromMenu) closeMenus();
+    pickWithPointer(button.dataset.move, fromMenu);
+  });
+  document.addEventListener('click', (event) => {
+    if (openMenu && !event.target.closest('.dd')) closeMenus();
   });
   $('#btn-lock').addEventListener('click', lockIn);
   document.addEventListener('keydown', onKeyDown);
 
-  $('#btn-rematch').addEventListener('click', async () => {
-    if (!session) return;
-    try {
-      await api(`/api/rooms/${session.code}/rematch`, { method: 'POST', body: { token: session.token } });
-    } catch (err) {
-      notice(err.message);
-    }
-  });
+  $('#btn-rematch').addEventListener('click', () => roomAction('rematch'));
 }
 
 async function init() {
@@ -963,15 +1233,10 @@ async function init() {
   rules.attacks.sort((a, b) => a.value - b.value);
   maxScore = rules.attacks[rules.attacks.length - 1].value;
 
-  buildMeter($('#you-meter'));
-  buildMeter($('#opp-meter'));
   buildPicker();
   renderRules();
   wireEvents();
   timerLoop = setInterval(updateTimer, 100);
-
-  // On a wide screen the round log is open beside the board.
-  if (window.matchMedia('(min-width: 961px)').matches) $('#log-box').open = true;
 
   const hashCode = parseHash();
   const stored = loadSession();

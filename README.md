@@ -13,7 +13,7 @@ cd clash-game        # the folder that contains server.js
 node server.js
 ```
 
-Open http://localhost:3000. To test alone, open the invite link in a second tab (each tab is its own player).
+Open http://localhost:3000. To test alone, open the invite link in a second tab (each tab is its own player). In the second tab press **Ready**, then go back to the first tab and press **Start match**.
 
 ```bash
 npm test                    # rules tests
@@ -44,8 +44,22 @@ Render runs the game on the internet and gives you a link such as `https://load-
 
 - The server goes to sleep after about 15 minutes with no visitors. The first visit afterwards takes up to a minute to wake it. Open the link a minute before your friends arrive.
 - Rooms live in memory, so if the server restarts or sleeps, running games and rooms are lost. Create a new room.
-- To update the game later, upload the changed files to the same GitHub repository. Render redeploys by itself.
+- To update the game later, upload the changed files to the same GitHub repository (open the repository, **Add file**, **Upload files**, drag the changed files in, then **Commit changes**). Keep the same folder layout: `public` files go inside `public`, `src` files inside `src`. Render notices the new commit and redeploys by itself in a few minutes. Wait until it says **Live** again.
 - You can read Render's own documentation at render.com/docs.
+
+## How a match starts
+
+1. The host creates a room and sends the invite link (or the 5-letter code).
+2. The friend joins and lands in the **waiting room** with the host. They are shown as **Not ready**.
+3. The friend presses **Ready** (and can press **Unready** to change their mind).
+4. The host's **Start match** button switches on only while the friend is ready and online. Nobody else can start the match.
+5. When a match ends, both players can press **Play again** for a rematch. If someone leaves, the host goes back to the waiting room. If the host leaves, the room closes.
+
+## The match screen
+
+- A white score card shows the score as a ratio, you : opponent (for example `2:2`), the last round's moves and what happened.
+- Under the timer there are three controls: a **Defend** menu (Mag, N.V, Shield, Rebound), the big **Load** tile, and an **Attack** menu (Path to Professor, with the unlock score and the defenses that answer each one).
+- Tap or click a move to highlight it, then press **Lock in**. **Double-click** (or double-tap) a move to lock it in straight away.
 
 ## Rules as implemented
 
@@ -91,11 +105,13 @@ Render runs the game on the internet and gives you a link such as `https://load-
 | W | N.V | D | Dam |
 | E | Shield | F | ICY |
 | R | Rebound | G | Touch E |
-| Enter | Lock in | H | Storm |
-| | | J | Beast |
-| | | K | Professor |
+| Z | Open or close the Defend menu | H | Storm |
+| X | Open or close the Attack menu | J | Beast |
+| Enter | Lock in | K | Professor |
 
-To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds are at the top of `public/app.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
+Inside an open menu the up and down arrow keys choose a move, and Esc closes the menu.
+
+To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds (`KEYS` and `MENU_KEYS`) are at the top of `public/app.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
 
 ## Project layout
 
@@ -104,6 +120,7 @@ server.js              HTTP server, rooms, round timer, live updates
 src/engine.js          the game rules, no I/O
 public/                the website (index.html, style.css, app.js, guide.html, guide.css)
 test/engine.test.js    rules tests
+package.json           start and test commands
 ```
 
 ## How the live connection works
@@ -114,5 +131,5 @@ Each player's browser opens a Server-Sent Events stream to receive game state, a
 
 - **Rooms are in memory.** Restarting the server ends all games. Rooms nobody has touched for 3 hours are removed.
 - **A player's seat lives in their browser tab.** Refreshing keeps it. Closing the tab gives up the seat, because there are no accounts.
-- **Two players per room.** No spectators, chat, or match history.
+- **Two players per room.** No spectators, chat, or match history. The round-by-round log was removed from the match screen; only the latest round is shown.
 - Run **one** server instance only, because rooms are not shared between instances.

@@ -2,7 +2,7 @@
 
 An online duel game for friends. Both players pick a move in secret each round, build up their score with **Load**, unlock stronger attacks, and try to pick the defense that stops their opponent's attack. Each round has a 5-second timer. Play a **1v1**, or a **Team vs Team** battle (2v2, 3v3 or 4v4).
 
-The game was called "Load & Clash" before. Your GitHub repository and Render service can keep their old names. Nothing in the game depends on them. If you want the web address to say Hex Men too, rename the Render service in its **Settings** (the address changes with it, so send your friends the new link).
+The game was called "Load & Clash" before. Your GitHub repository and Render service can keep their old names, because nothing in the game depends on them. Note that renaming a Render service in **Settings** only changes its name in the dashboard. Its `.onrender.com` address is fixed when the service is created. To get `hex-men.onrender.com`, see "Getting a new web address" below.
 
 ## Run it on your own computer
 
@@ -47,6 +47,13 @@ Render runs the game on the internet and gives you a link such as `https://your-
 - To update the game later, upload the changed files to the same GitHub repository (open the repository, **Add file**, **Upload files**, drag the changed files in, then **Commit changes**). Keep the same folder layout: `public` files go inside `public`, `src` files inside `src`, and the pictures inside `public/img`. Render notices the new commit and redeploys by itself in a few minutes. Wait until it says **Live** again.
 - You can read Render's own documentation at render.com/docs.
 
+### Getting a new web address (for example hex-men.onrender.com)
+
+Render does not let you change the `.onrender.com` address of an existing service. Your two options:
+
+1. **Make a second service with the new name.** In Render click **New**, then **Web Service**, pick the same GitHub repository, and type `hex-men` as the **Name**. Use the same settings as in step 5. If nobody else has taken that name, the address is `https://hex-men.onrender.com`. If it is taken, Render adds random letters to it, and you can try another name. Once the new one is **Live** and works, open the old service, go to **Settings**, scroll to the bottom and choose **Delete Web Service**. The old link stops working, so send friends the new one.
+2. **Use your own domain.** Buy a domain name from a registrar, then add it in the service's **Settings** under **Custom Domains** and follow Render's DNS instructions. This gives the cleanest link, but a domain costs money each year.
+
 ## How a match starts
 
 1. The host creates a room and sends the invite link (or the 5-letter code).
@@ -58,8 +65,8 @@ Render runs the game on the internet and gives you a link such as `https://your-
 ## The match screen
 
 - A white score card shows the score as a ratio, you : opponent (for example `2:2`), the last round's moves with their pictures, and what happened. The other player's picture is mirrored so the two hands face each other.
-- Under the timer there are three controls: a **Defend** button, the big **Load** tile, and an **Attack** button.
-- **Defend** and **Attack** open a **wheel menu**: the four defenses (Mag, N.V, Shield, Rebound) or the eight attacks (Path to Professor), each with its picture, its rim colors showing which defense answers it, and what it needs to unlock. The middle of the wheel explains the move you point at.
+- Under the timer there are three controls: a **Defence** button, the big **Load** tile, and an **Attack** button.
+- **Defence** and **Attack** open a **wheel menu**: the four defenses (Mag, N.V, Shield, Rebound) or the eight attacks (Path to Professor), each with its picture, its rim colors showing which defense answers it, and what it needs to unlock. The middle of the wheel explains the move you point at.
 - Tap or click a move to pick it, then press **Lock in**. **Double-click** (or double-tap) a move to lock it in straight away.
 
 ## Team vs Team
@@ -119,7 +126,7 @@ Details worth knowing: a room holds exactly twice the team size in players. Anyo
 | W | N.V | D | Dam |
 | E | Shield | F | ICY |
 | R | Rebound | G | Touch E |
-| Z | Open or close the Defend wheel | H | Storm |
+| Z | Open or close the Defence wheel | H | Storm |
 | X | Open or close the Attack wheel | J | Beast |
 | Enter | Lock in | K | Professor |
 
@@ -135,7 +142,7 @@ src/engine.js          the 1v1 game rules, no I/O
 src/team.js            Team vs Team rules (teams, order, rotation, scoring), no I/O
 public/index.html      the game page
 public/app.js          the game screen, menus, keys and results
-public/wheel.js        the Defend and Attack wheel menus
+public/wheel.js        the Defence and Attack wheel menus
 public/team-ui.js      the Team vs Team screens
 public/dom.js          small helpers and the move pictures list
 public/style.css       all the styling (white theme)

@@ -37,7 +37,7 @@ const DOUBLE_MS = 500; // two clicks or taps on the same move within this time l
 const MENU_CLOSE_MS = 600; // the wheel closes this long after a move is picked from it
 
 const GROUPS = {
-  def: { trigger: '#trig-def', pick: '#pick-def', art: '#art-def', type: 'defense', label: 'Defend' },
+  def: { trigger: '#trig-def', pick: '#pick-def', art: '#art-def', type: 'defense', label: 'Defence' },
   atk: { trigger: '#trig-atk', pick: '#pick-atk', art: '#art-atk', type: 'attack', label: 'Attack' },
 };
 
@@ -966,6 +966,12 @@ function timeoutNoteWatch(entry, s) {
   return '';
 }
 
+/** The text for the round that decided a team match, for the match lobby. `names` are the two players, Team Red's first. */
+function describeRound(entry, names) {
+  const view = { you: { name: names[0] }, opponent: { name: names[1] } };
+  return describeWatch(entry, view) + timeoutNoteWatch(entry, view);
+}
+
 const describe = (entry, s) =>
   s.spectating ? describeWatch(entry, s) + timeoutNoteWatch(entry, s) : describeCore(entry, s) + timeoutNote(entry, s);
 
@@ -1209,7 +1215,7 @@ function renderRules() {
       'The host creates a room and sends the link. In a 1v1 room the guest joins, presses Ready, and the host starts the match.',
       'Both players start at 0 and pick a move each round. Moves stay hidden until both players have locked in.',
       'You have 5 seconds each round. If you have not locked in when time runs out, Load is played for you.',
-      'Press Defend or Attack to open a wheel of moves. Click or tap a move to pick it, then press Lock in. Double-click or double-tap a move to lock it in at once.',
+      'Press Defence or Attack to open a wheel of moves. Click or tap a move to pick it, then press Lock in. Double-click or double-tap a move to lock it in at once.',
       'Load adds 1 point to your score.',
       "You can defend at any time. If you are attacked and use a matching defense, the attacker loses points equal to the attack's number.",
       'If you are attacked and do not use a matching defense, including by loading, you lose.',
@@ -1242,7 +1248,7 @@ function renderRules() {
       'Load: L',
       'Defenses: Q Mag, W N.V, E Shield, R Rebound',
       'Attacks: A Path, S Boss, D Dam, F ICY, G Touch E, H Storm, J Beast, K Professor',
-      `Wheels: ${MENU_KEYS.def.toUpperCase()} opens the Defend wheel, ${MENU_KEYS.atk.toUpperCase()} opens the Attack wheel. With a wheel open, the arrow keys go round it and pick a move, and Esc closes it.`,
+      `Wheels: ${MENU_KEYS.def.toUpperCase()} opens the Defence wheel, ${MENU_KEYS.atk.toUpperCase()} opens the Attack wheel. With a wheel open, the arrow keys go round it and pick a move, and Esc closes it.`,
       'Enter locks in your highlighted move.',
     ),
   );
@@ -1459,6 +1465,8 @@ async function init() {
     getSession: () => session,
     onLeave: leaveRoom,
     moveName,
+    moveColor: colorOf,
+    describeRound,
   });
   buildPicker();
   renderRules();

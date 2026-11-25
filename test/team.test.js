@@ -521,6 +521,22 @@ test('the match lobby view lists who is up and what happened last', () => {
   assert.deepEqual(view.teams.map((t) => t.up), [0, 1]);
 });
 
+test('the last match records the winning round with both moves, team 1 first, for every viewer', () => {
+  const { room, ctx } = lobbyRoom(2, 25);
+  startMatch(room, ctx);
+  playGame(room, ctx, 1); // team 2's player wins with Path against Load
+  for (const player of room.players) {
+    const { lastMatch } = viewFor(room, player, ctx);
+    assert.equal(lastMatch.winnerTeam, 1);
+    assert.equal(lastMatch.forfeit, false);
+    assert.equal(lastMatch.last.round, 2);
+    assert.equal(lastMatch.last.you, 'load'); // the first team's player
+    assert.equal(lastMatch.last.opp, 'path'); // the second team's player
+    assert.equal(lastMatch.last.result, 'lose'); // seen from the first team's side
+    assert.deepEqual(lastMatch.last.timedOut, { you: false, opp: false });
+  }
+});
+
 test('the waiting section is listed in the lobby view', () => {
   const room = newRoom(2);
   const a = join(room, 'A');

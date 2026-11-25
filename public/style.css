@@ -549,6 +549,12 @@ input[type="text"]::placeholder { color: #767884; }
 .wt-pick { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .wt-pick.is-empty { color: var(--muted); font-weight: 600; font-size: 19px; }
 
+/* Nothing picked yet: the tile just says what it is, in big type like Load, with its key underneath. */
+.wt:not(.has-pick) { justify-items: center; text-align: center; }
+.wt:not(.has-pick) .wt-label { display: grid; justify-items: center; gap: 6px; color: var(--text); }
+.wt:not(.has-pick) .wt-word { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.wt:not(.has-pick) .wt-value { display: none; }
+
 /* A move from this wheel is picked: the button takes its colour. */
 .wt.has-pick {
   border-color: var(--c, var(--text));
@@ -989,6 +995,15 @@ details summary:hover { color: var(--text); }
 
 .last-match { padding: 10px 14px; border-left: 6px solid var(--team, var(--line)); border-radius: 10px; background: var(--surface); font-size: 15px; }
 
+/* How the last match ended: the line, then the round that decided it */
+.last-block { display: grid; gap: 10px; }
+.last-round { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.lr-title { font-size: 15px; font-weight: 650; }
+.last-round .clash { align-items: stretch; }
+.last-round .played { background: var(--bg); align-content: center; }
+.last-round .who-team { display: block; font-size: 12px; }
+.last-round .state { margin-top: 2px; }
+
 /* End screen */
 .team-banner { background: var(--team); color: var(--team-ink); }
 .team-banner h2 { overflow-wrap: anywhere; }
@@ -1050,6 +1065,7 @@ details summary:hover { color: var(--text); }
   .wt,
   .move.load { min-height: 104px; padding: 8px 10px; border-radius: 10px; }
   .wt-label { font-size: 13px; }
+  .wt:not(.has-pick) .wt-word { font-size: 21px; }
   .wt-value { flex-direction: column; align-items: flex-start; gap: 4px; }
   .wt-art { width: 40px; height: 40px; border-radius: 10px; }
   .wt-pick { font-size: 17px; }

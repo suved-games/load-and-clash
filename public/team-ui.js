@@ -2,9 +2,9 @@
 // the end screen, plus the score strip above a match. The server sends one
 // view per player (see src/team.js), and everything here just draws it.
 
-import { $, h, plural } from './dom.js';
+import { $, h, moveIcon, plural } from './dom.js';
 
-let ctx = null; // { act(action, body) -> Promise<boolean>, teamOptions, getSession(), onLeave() }
+let ctx = null; // { act(action, body) -> Promise<boolean>, teamOptions, getSession(), onLeave(), moveName(id), moveColor(id), describeRound(entry, names) }
 let draftName = null; // text typed in the team-name box and not saved yet
 let draftTeam = null;
 let copiedAt = 0;
@@ -427,6 +427,47 @@ function lastMatchLine(s) {
   return tint(h('p', { class: 'last-match', text }), team.color);
 }
 
+/** The round that decided the last match, drawn like the result card in a game:
+ *  both moves with their pictures. Team Red's player is on the left and Team
+ *  Blue's on the right, as on the score strip. A forfeit has no deciding round. */
+function lastRoundCard(s) {
+  const last = s.lastMatch;
+  const round = last && last.last;
+  if (!round || last.forfeit || !round.result) return null;
+
+  const side = (i) => {
+    const team = s.teams[i];
+    const id = i === 0 ? round.you : round.opp;
+    const won = last.winnerTeam === i;
+    return tint(
+      h(
+        'div',
+        { class: `played ${i === 0 ? 'you' : 'opp'} t-${ctx.moveColor(id)}` },
+        h('span', { class: 'who' }, last.names[i], h('span', { class: 'who-team', text: team.name })),
+        h('span', { class: 'art' }, moveIcon(id)),
+        h('strong', { class: 'mv', text: ctx.moveName(id) }),
+        won ? chip('Won the match', 'up') : null,
+      ),
+      team.color,
+    );
+  };
+
+  return h(
+    'div',
+    { class: 'last-round', role: 'group', 'aria-label': `Match ${last.number}, winning round` },
+    h('p', { class: 'lr-title', text: `Match ${last.number}, winning round (round ${round.round})` }),
+    h('div', { class: 'clash' }, side(0), h('span', { class: 'vs', text: 'vs' }), side(1)),
+    h('p', { class: 'rv-text', text: ctx.describeRound(round, last.names) }),
+  );
+}
+
+/** How the last match ended: one line, plus the winning round when there was one. */
+function lastMatchBlock(s) {
+  const line = lastMatchLine(s);
+  if (!line) return null;
+  return h('section', { class: 'last-block', 'aria-label': `Match ${s.lastMatch.number} result` }, line, lastRoundCard(s));
+}
+
 function matchLobbyScreen(s) {
   const me = s.me;
   const [a, b] = s.current || [null, null];
@@ -458,7 +499,7 @@ function matchLobbyScreen(s) {
       duelCard(s, 1),
     ),
     h('div', { class: 'room-actions' }, action, h('p', { class: 'hint', role: 'status', text: hint })),
-    lastMatchLine(s),
+    lastMatchBlock(s),
     h('div', { class: 'order-grid' }, orderList(s, 0), orderList(s, 1)),
     openEditor,
   ];
@@ -498,7 +539,7 @@ function overScreen(s) {
       ),
       winner.color,
     ),
-    lastMatchLine(s),
+    lastMatchBlock(s),
     h('div', { class: 'order-grid' }, orderList(s, 0), orderList(s, 1)),
   ];
 }

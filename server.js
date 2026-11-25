@@ -1,4 +1,4 @@
-// Load & Clash: zero-dependency multiplayer server.
+// Hex Men: zero-dependency multiplayer server.
 //
 // Transport: plain HTTP. Each player opens a Server-Sent Events stream to
 // receive live state, and POSTs their moves. Some hosts and phone networks
@@ -12,6 +12,10 @@
 // Round timer: each round lasts ROUND_MS (5 seconds). A player who has not
 // locked in when it runs out plays Load. The timer only runs while both
 // players are connected, so a dropped connection never costs anyone a game.
+//
+// Two kinds of room share this server. A one-on-one room (the code below) has
+// a host and one guest. A team room (rules in src/team.js, glue at the bottom
+// of the API section) holds 4, 6 or 8 players split into two teams.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -25,6 +29,7 @@ import {
   resolveRound,
   rulesForClient,
 } from './src/engine.js';
+import * as Team from './src/team.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -60,7 +65,17 @@ function cleanName(raw, fallback) {
 }
 
 function makePlayer(name) {
-  return { token: randomBytes(16).toString('hex'), name, streams: new Set(), lastPoll: 0 };
+  return { token: randomBytes(16).toString('hex'), name, streams: new Set(), lastPoll: 0, awaySince: null };
+}
+
+const isClosed = (room) => (room.mode === 'team' ? room.stage : room.status) === 'closed';
+
+/** Team rooms ask this server who is online and what time it is. */
+const teamCtx = (now = Date.now()) => ({ now, online: (player) => isConnected(player, now) });
+
+function playerByToken(room, token) {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  return room.players.find((p) => p && p.token === token) || null;
 }
 
 function isConnected(player, now = Date.now()) {
@@ -84,6 +99,7 @@ function createRoom(hostName) {
   const code = newCode();
   const host = makePlayer(hostName);
   const room = {
+    mode: '1v1',
     code,
     lastActive: Date.now(),
     players: [host, null],
@@ -105,6 +121,15 @@ function createRoom(hostName) {
     version: 0, // goes up every time the state changes, so pollers can skip unchanged state
     conn: [false, false], // last connection state we told the players about
   };
+  rooms.set(code, room);
+  return { room, player: host };
+}
+
+function createTeamRoomWithHost(hostName, size, target) {
+  const code = newCode();
+  const room = Team.createTeamRoom({ code, size, target, roundMs: ROUND_MS }); // throws on bad options
+  const host = makePlayer(hostName);
+  Team.addPlayer(room, host);
   rooms.set(code, room);
   return { room, player: host };
 }
@@ -211,6 +236,15 @@ function send(res, payload) {
 function broadcast(room) {
   room.version += 1;
   room.lastActive = Date.now();
+  if (room.mode === 'team') {
+    const ctx = teamCtx();
+    for (const player of room.players) {
+      if (player.streams.size === 0) continue;
+      const view = Team.viewFor(room, player, ctx);
+      for (const res of player.streams) send(res, view);
+    }
+    return;
+  }
   for (let seat = 0; seat < 2; seat++) {
     const player = room.players[seat];
     if (!player) continue;
@@ -263,6 +297,10 @@ function expireRound(room) {
  *  anyone's connection changed. Called whenever a connection opens or closes,
  *  and several times a second by tick(). */
 function updateRoom(room, now = Date.now()) {
+  if (room.mode === 'team') {
+    updateTeamRoom(room, now);
+    return;
+  }
   const conn = [isConnected(room.players[0], now), isConnected(room.players[1], now)];
   let changed = conn[0] !== room.conn[0] || conn[1] !== room.conn[1];
   room.conn = conn;
@@ -297,6 +335,35 @@ function updateRoom(room, now = Date.now()) {
     }
   }
 
+  if (changed) broadcast(room);
+}
+
+/** Team rooms: tell everybody when someone's connection changes, drop players
+ *  who have been gone too long, move the game on, and run the round timer. */
+function updateTeamRoom(room, now) {
+  if (room.stage === 'closed') return;
+  const ctx = teamCtx(now);
+  let changed = false;
+
+  const signature = room.players.map((p) => `${p.id}${ctx.online(p) ? '+' : '-'}`).join(' ');
+  if (signature !== room.connSig) {
+    room.connSig = signature;
+    changed = true;
+  }
+
+  // Somebody who vanished (closed the tab) must not hold up everyone else for ever.
+  for (const player of [...room.players]) {
+    if (ctx.online(player)) player.awaySince = null;
+    else if (player.awaySince === null) player.awaySince = now;
+    else if (now - player.awaySince >= GUEST_AWAY_MS) {
+      Team.removePlayer(room, player.id);
+      changed = true;
+    }
+  }
+  if (room.stage === 'closed') return;
+
+  if (Team.advance(room, ctx)) changed = true;
+  if (Team.syncTimer(room, ctx)) changed = true;
   if (changed) broadcast(room);
 }
 
@@ -365,7 +432,7 @@ function allowCreate(ip) {
 
 function getRoom(code) {
   const room = rooms.get(String(code).toUpperCase());
-  if (!room || room.status === 'closed') throw new HttpError(404, 'Room not found. Check the code and try again.');
+  if (!room || isClosed(room)) throw new HttpError(404, 'Room not found. Check the code and try again.');
   return room;
 }
 
@@ -382,7 +449,7 @@ async function handleApi(req, res, url) {
   const method = req.method;
 
   if (pathname === '/api/rules' && method === 'GET') {
-    return json(res, 200, rulesForClient());
+    return json(res, 200, { ...rulesForClient(), team: Team.optionsForClient() });
   }
 
   if (pathname === '/api/rooms' && method === 'POST') {
@@ -391,11 +458,20 @@ async function handleApi(req, res, url) {
     }
     if (rooms.size >= MAX_ROOMS) throw new HttpError(503, 'The server is full. Try again later.');
     const body = await readJson(req);
+    if (body.mode !== undefined && body.mode !== '1v1' && body.mode !== 'team') {
+      throw new HttpError(400, 'Choose 1v1 or Team vs Team.');
+    }
+    if (body.mode === 'team') {
+      const { room, player } = createTeamRoomWithHost(cleanName(body.name, 'Player 1'), body.size, body.target);
+      return json(res, 201, { code: room.code, token: player.token, mode: 'team', id: player.id });
+    }
     const { room, player } = createRoom(cleanName(body.name, 'Player 1'));
-    return json(res, 201, { code: room.code, token: player.token, seat: 0 });
+    return json(res, 201, { code: room.code, token: player.token, seat: 0, mode: '1v1' });
   }
 
-  const match = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(events|state|join|move|rematch|ready|start|leave))?$/);
+  const match = pathname.match(
+    /^\/api\/rooms\/([A-Za-z0-9]+)(?:\/(events|state|join|move|rematch|ready|start|leave|team|order|confirm|style|matchready))?$/,
+  );
   if (!match) throw new HttpError(404, 'Not found.');
   const [, rawCode, action] = match;
   const code = rawCode.toUpperCase();
@@ -404,6 +480,7 @@ async function handleApi(req, res, url) {
   // A closed room is still told to its guest through the open stream, but
   // nobody can use it any more.
   const room = getRoom(code);
+  if (room.mode === 'team') return handleTeamApi(req, res, url, room, action, method);
 
   // Is the room there, and does it have space? Used by invite links. With a
   // token it also says whether that token still has a seat in the room.
@@ -411,6 +488,7 @@ async function handleApi(req, res, url) {
     const token = url.searchParams.get('token');
     return json(res, 200, {
       code: room.code,
+      mode: '1v1',
       status: room.status,
       full: Boolean(room.players[1]),
       seated: token ? seatOf(room, token) !== -1 : undefined,
@@ -535,6 +613,112 @@ async function handleApi(req, res, url) {
   throw new HttpError(405, 'Method not allowed.');
 }
 
+// ------------------------------------------------------------ team rooms ----
+
+function requireTeamPlayer(room, token) {
+  const player = playerByToken(room, token);
+  if (!player) throw new HttpError(403, 'You are not a player in this room.');
+  return player;
+}
+
+async function handleTeamApi(req, res, url, room, action, method) {
+  // Invite links ask whether there is a free place. With a token, whether that token still has one.
+  if (!action && method === 'GET') {
+    const token = url.searchParams.get('token');
+    const started = room.stage !== 'teams';
+    return json(res, 200, {
+      code: room.code,
+      mode: 'team',
+      status: room.stage,
+      size: room.size,
+      target: room.target,
+      started,
+      full: started || room.players.length >= Team.capacity(room),
+      seated: token ? Boolean(playerByToken(room, token)) : undefined,
+    });
+  }
+
+  if (action === 'join' && method === 'POST') {
+    const body = await readJson(req);
+    const guest = makePlayer(cleanName(body.name, `Player ${room.players.length + 1}`));
+    Team.addPlayer(room, guest);
+    broadcast(room);
+    return json(res, 200, { code: room.code, token: guest.token, mode: 'team', id: guest.id });
+  }
+
+  if (action === 'events' && method === 'GET') {
+    const player = requireTeamPlayer(room, url.searchParams.get('token'));
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`retry: 2000\n:${' '.repeat(2048)}\n\n`);
+    player.streams.add(res);
+    updateRoom(room); // tells the others this player is connected
+    send(res, Team.viewFor(room, player, teamCtx()));
+    req.on('close', () => {
+      player.streams.delete(res);
+      if (rooms.get(room.code) === room) updateRoom(room);
+    });
+    return undefined;
+  }
+
+  if (action === 'state' && method === 'GET') {
+    const player = requireTeamPlayer(room, url.searchParams.get('token'));
+    player.lastPoll = Date.now();
+    updateRoom(room);
+    const since = Number(url.searchParams.get('v'));
+    if (since === room.version) return json(res, 200, { unchanged: true, serverNow: Date.now() });
+    return json(res, 200, Team.viewFor(room, player, teamCtx()));
+  }
+
+  if (method !== 'POST') throw new HttpError(405, 'Method not allowed.');
+  const body = await readJson(req);
+  const player = requireTeamPlayer(room, body.token);
+  const ctx = teamCtx();
+
+  switch (action) {
+    case 'team':
+      Team.chooseTeam(room, player.id, body.team);
+      break;
+    case 'ready':
+      Team.setReady(room, player.id, body.ready);
+      break;
+    case 'style':
+      Team.setStyle(room, player.id, { name: body.name, color: body.color });
+      break;
+    case 'order':
+      Team.movePlayer(room, player.id, body.id, body.direction);
+      break;
+    case 'confirm':
+      Team.setConfirm(room, player.id, body.confirmed);
+      break;
+    case 'matchready':
+      Team.setMatchReady(room, player.id, body.ready);
+      break;
+    case 'move':
+      Team.playMove(room, player.id, body.move, body.round, ctx);
+      break;
+    case 'rematch':
+      Team.requestRematch(room, player.id);
+      break;
+    case 'leave':
+      Team.removePlayer(room, player.id);
+      break;
+    default:
+      throw new HttpError(405, 'Method not allowed.');
+  }
+
+  if (room.stage !== 'closed') {
+    Team.advance(room, ctx);
+    Team.syncTimer(room, ctx);
+  }
+  broadcast(room);
+  return json(res, 200, { ok: true });
+}
+
 // -------------------------------------------------------- static files ----
 
 const TYPES = {
@@ -589,7 +773,7 @@ function serveStatic(req, res, pathname) {
     res.writeHead(200, {
       'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control': 'no-cache',
+      'Cache-Control': rel.startsWith('/img/') ? 'public, max-age=3600' : 'no-cache',
     });
     if (req.method === 'HEAD') {
       res.end();
@@ -609,7 +793,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     return serveStatic(req, res, url.pathname);
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 500;
+    const status = err instanceof HttpError || err instanceof Team.TeamError ? err.status : 500;
     if (status === 500) console.error(err);
     if (res.headersSent) {
       res.end();
@@ -635,7 +819,7 @@ const sweeper = setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     const connected = room.players.some((p) => isConnected(p, now));
-    if (room.status === 'closed' && now - room.lastActive > CLOSED_ROOM_MS) rooms.delete(code);
+    if (isClosed(room) && now - room.lastActive > CLOSED_ROOM_MS) rooms.delete(code);
     else if (!connected && now - room.lastActive > ROOM_IDLE_MS) rooms.delete(code);
   }
 }, 5 * 60 * 1000);
@@ -657,5 +841,5 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 server.listen(PORT, HOST, () => {
-  console.log(`Load & Clash is running at http://localhost:${PORT}`);
+  console.log(`Hex Men is running at http://localhost:${PORT}`);
 });

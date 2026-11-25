@@ -77,9 +77,18 @@
   .guide li { break-inside: avoid; }
   .guide .rules-table,
   .guide .keys { break-inside: avoid; }
-  .guide .rules-table { margin-top: 10px; font-size: 13px; }
+  .guide .rules-table { margin-top: 6px; font-size: 13px; }
+  .guide .sub { margin: 10px 0 2px; font-size: 14px; break-after: avoid; }
+  .guide .rule-art { width: 26px; height: 26px; }
   .guide .rules-table th,
   .guide .rules-table td { padding: 5px 10px 5px 0; }
   .guide .keys { gap: 6px 14px; }
   .guide kbd { background: #fff; }
 }
+
+/* Added for Hex Men: small headings inside a section, move pictures, the team section. */
+.guide .sub { font-size: 16px; font-weight: 700; margin: 18px 0 6px; }
+.guide .lead.small { font-size: 16px; margin-bottom: 12px; }
+.guide .plain .rule-name { font-weight: 700; vertical-align: middle; }
+.guide .plain .rule-name .rule-art { width: 28px; height: 28px; }
+.guide .rule-art { object-fit: contain; }

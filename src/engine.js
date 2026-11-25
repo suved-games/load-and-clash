@@ -1,4 +1,4 @@
-// Game rules for "Load & Clash". Pure functions, no I/O, so the server and the
+// Game rules for "Hex Men". Pure functions, no I/O, so the server and the
 // tests share exactly the same logic.
 //
 // Rules, as described by the game's designer:

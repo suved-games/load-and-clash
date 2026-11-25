@@ -1,15 +1,15 @@
-# Load & Clash
+# Hex Men
 
-An online 1v1 duel game. Both players pick a move in secret each round, build up their score with **Load**, unlock stronger attacks, and try to pick the defense that stops their opponent's attack. Each round has a 5-second timer.
+An online duel game for friends. Both players pick a move in secret each round, build up their score with **Load**, unlock stronger attacks, and try to pick the defense that stops their opponent's attack. Each round has a 5-second timer. Play a **1v1**, or a **Team vs Team** battle (2v2, 3v3 or 4v4).
 
-"Load & Clash" is a placeholder name. Change it in `public/index.html` and `public/guide.html` (the `<title>` and the `<h1>`).
+The game was called "Load & Clash" before. Your GitHub repository and Render service can keep their old names. Nothing in the game depends on them. If you want the web address to say Hex Men too, rename the Render service in its **Settings** (the address changes with it, so send your friends the new link).
 
 ## Run it on your own computer
 
 You need Node.js 20 or newer (free, from nodejs.org). There is nothing else to install.
 
 ```bash
-cd clash-game        # the folder that contains server.js
+cd hex-men          # the folder that contains server.js
 node server.js
 ```
 
@@ -25,26 +25,26 @@ This only works for you. To play with friends on their own phones and laptops, p
 
 ## Put it online with Render (free) so friends can join by link
 
-Render runs the game on the internet and gives you a link such as `https://load-and-clash.onrender.com`. Your friends open that link on any device.
+Render runs the game on the internet and gives you a link such as `https://your-service-name.onrender.com`. Your friends open that link on any device.
 
 1. **GitHub account.** Sign up (free) at github.com.
-2. **Repository.** Click **+** at the top right, then **New repository**. Name it `load-and-clash`, choose **Public**, and click **Create repository**.
-3. **Upload the files.** Unzip `clash-game.zip` and open the folder that contains `server.js`. On the new repository page, click **uploading an existing file**. Select everything inside that folder (`server.js`, `package.json`, `public`, `src`, `test`, `README.md`) and drag it into the browser. Wait for the upload, then click **Commit changes**. The repository's first page should now list `server.js` and `package.json` directly, not inside another folder.
+2. **Repository.** Click **+** at the top right, then **New repository**. Give it any name (for example `hex-men`), choose **Public**, and click **Create repository**.
+3. **Upload the files.** Unzip `hex-men.zip` and open the folder that contains `server.js`. On the new repository page, click **uploading an existing file**. Select everything inside that folder (`server.js`, `package.json`, `public`, `src`, `test`, `README.md`). The `public` folder now holds an `img` folder with the logo and the move pictures, so upload it whole and drag it into the browser. Wait for the upload, then click **Commit changes**. The repository's first page should now list `server.js` and `package.json` directly, not inside another folder.
 4. **Render account.** Go to render.com and sign up with your GitHub account. Allow it to see your repository.
-5. **New web service.** In the Render dashboard click **New**, then **Web Service**, and pick your `load-and-clash` repository. Fill in:
+5. **New web service.** In the Render dashboard click **New**, then **Web Service**, and pick your repository. Fill in:
    - **Language:** Node
    - **Build Command:** `npm install`
    - **Start Command:** `npm start`
    - **Instance Type:** Free
 6. Click **Create Web Service** and wait a few minutes until it says **Live**. Your link is shown at the top of the page (it ends in `.onrender.com`).
 7. **Test it** by opening the link on your computer, clicking **Create room**, and opening the invite link on your phone using mobile data instead of Wi-Fi. If both screens show the game, your friends can join too.
-8. **Share.** Send friends the room invite link (or the 5-letter room code plus the website link). `Load-and-Clash-friends-guide.pdf` explains how to join and play, and the same guide is on the website at `/guide`.
+8. **Share.** Send friends the room invite link (or the 5-letter room code plus the website link). `Hex-Men-friends-guide.pdf` explains how to join and play, and the same guide is on the website at `/guide`.
 
 ### Good to know about the free plan
 
 - The server goes to sleep after about 15 minutes with no visitors. The first visit afterwards takes up to a minute to wake it. Open the link a minute before your friends arrive.
 - Rooms live in memory, so if the server restarts or sleeps, running games and rooms are lost. Create a new room.
-- To update the game later, upload the changed files to the same GitHub repository (open the repository, **Add file**, **Upload files**, drag the changed files in, then **Commit changes**). Keep the same folder layout: `public` files go inside `public`, `src` files inside `src`. Render notices the new commit and redeploys by itself in a few minutes. Wait until it says **Live** again.
+- To update the game later, upload the changed files to the same GitHub repository (open the repository, **Add file**, **Upload files**, drag the changed files in, then **Commit changes**). Keep the same folder layout: `public` files go inside `public`, `src` files inside `src`, and the pictures inside `public/img`. Render notices the new commit and redeploys by itself in a few minutes. Wait until it says **Live** again.
 - You can read Render's own documentation at render.com/docs.
 
 ## How a match starts
@@ -57,9 +57,23 @@ Render runs the game on the internet and gives you a link such as `https://load-
 
 ## The match screen
 
-- A white score card shows the score as a ratio, you : opponent (for example `2:2`), the last round's moves and what happened.
-- Under the timer there are three controls: a **Defend** menu (Mag, N.V, Shield, Rebound), the big **Load** tile, and an **Attack** menu (Path to Professor, with the unlock score and the defenses that answer each one).
-- Tap or click a move to highlight it, then press **Lock in**. **Double-click** (or double-tap) a move to lock it in straight away.
+- A white score card shows the score as a ratio, you : opponent (for example `2:2`), the last round's moves with their pictures, and what happened. The other player's picture is mirrored so the two hands face each other.
+- Under the timer there are three controls: a **Defend** button, the big **Load** tile, and an **Attack** button.
+- **Defend** and **Attack** open a **wheel menu**: the four defenses (Mag, N.V, Shield, Rebound) or the eight attacks (Path to Professor), each with its picture, its rim colors showing which defense answers it, and what it needs to unlock. The middle of the wheel explains the move you point at.
+- Tap or click a move to pick it, then press **Lock in**. **Double-click** (or double-tap) a move to lock it in straight away.
+
+## Team vs Team
+
+1. On the home page the host picks **Team vs Team**, the team size (2v2, 3v3 or 4v4) and how many wins a team needs (7 to 25), then creates the room.
+2. Everyone who joins starts in **Waiting**. Each person presses **Join** on Team Red or Team Blue. To switch, press the other team's Join button if it has room, or go back to Waiting first.
+3. **Player 1** of each team (the first player in the team's order) sets the team's **name** (any text) and **color** (15 to pick from, and the other team's color is not offered).
+4. Both teams must be full. Everyone presses **Ready**.
+5. **Order screen.** Each team secretly sets the order its players will fight in. Any teammate can move players up or down, and the order becomes final when every teammate confirms. Moving anyone clears the confirmations. The other team's order stays hidden until both teams are final.
+6. **Match lobby.** Both orders and the team score (starting at 0 : 0) are shown. Only the two players who are up press **Ready**. Everyone else watches each round once it is revealed.
+7. The winner of each 1v1 game stays on and scores 1 point for their team. The loser's team sends its next player, and after its last player it starts again from Player 1.
+8. The first team to reach the wins needed takes the game. **Play again** returns everyone to the team lobby with the same teams.
+
+Details worth knowing: a room holds exactly twice the team size in players. Anyone who leaves a game in progress forfeits their match, and a team with nobody left loses. A player who stays away from the waiting room or lobby for about 2 minutes is removed.
 
 ## Rules as implemented
 
@@ -105,21 +119,30 @@ Render runs the game on the internet and gives you a link such as `https://load-
 | W | N.V | D | Dam |
 | E | Shield | F | ICY |
 | R | Rebound | G | Touch E |
-| Z | Open or close the Defend menu | H | Storm |
-| X | Open or close the Attack menu | J | Beast |
+| Z | Open or close the Defend wheel | H | Storm |
+| X | Open or close the Attack wheel | J | Beast |
 | Enter | Lock in | K | Professor |
 
-Inside an open menu the up and down arrow keys choose a move, and Esc closes the menu.
+Inside an open wheel the arrow keys move round it and pick the move, and Esc closes it.
 
-To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds (`KEYS` and `MENU_KEYS`) are at the top of `public/app.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
+To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds (`KEYS` and `MENU_KEYS`) are at the top of `public/app.js`, and the team rules (order, rotation, scoring) are in `src/team.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
 
 ## Project layout
 
 ```
-server.js              HTTP server, rooms, round timer, live updates
-src/engine.js          the game rules, no I/O
-public/                the website (index.html, style.css, app.js, guide.html, guide.css)
-test/engine.test.js    rules tests
+server.js              HTTP server, 1v1 and team rooms, round timer, live updates
+src/engine.js          the 1v1 game rules, no I/O
+src/team.js            Team vs Team rules (teams, order, rotation, scoring), no I/O
+public/index.html      the game page
+public/app.js          the game screen, menus, keys and results
+public/wheel.js        the Defend and Attack wheel menus
+public/team-ui.js      the Team vs Team screens
+public/dom.js          small helpers and the move pictures list
+public/style.css       all the styling (white theme)
+public/guide.html      the friends guide (also at /guide), with guide.css
+public/img/            logo.png and moves/ (one picture per move)
+public/favicon.png     the browser tab icon (and apple-touch-icon.png)
+test/                  engine.test.js and team.test.js
 package.json           start and test commands
 ```
 
@@ -131,5 +154,5 @@ Each player's browser opens a Server-Sent Events stream to receive game state, a
 
 - **Rooms are in memory.** Restarting the server ends all games. Rooms nobody has touched for 3 hours are removed.
 - **A player's seat lives in their browser tab.** Refreshing keeps it. Closing the tab gives up the seat, because there are no accounts.
-- **Two players per room.** No spectators, chat, or match history. The round-by-round log was removed from the match screen; only the latest round is shown.
+- **No chat or match history.** In a 1v1 room it is two players only. In a team room, players who are not up watch each round once it is revealed. Only the latest round is shown on the card.
 - Run **one** server instance only, because rooms are not shared between instances.

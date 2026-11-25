@@ -1,7 +1,7 @@
 {
-  "name": "load-and-clash",
+  "name": "hex-men",
   "version": "1.0.0",
-  "description": "Online 1v1 simultaneous-move duel game: load up, unlock attacks, pick the right defense.",
+  "description": "Hex Men: an online duel for friends, 1v1 or Team vs Team. Load up, unlock attacks, pick the right defense.",
   "type": "module",
   "private": true,
   "engines": {

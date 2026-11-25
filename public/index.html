@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Load &amp; Clash</title>
-  <meta name="description" content="A two-player duel. Load up to unlock stronger attacks, and pick the defense that stops your opponent's.">
+  <title>Hex Men</title>
+  <meta name="description" content="Hex Men: an online duel for friends. Load up to unlock stronger attacks, and pick the defense that stops your opponent's. Play 1v1 or Team vs Team.">
   <meta name="theme-color" content="#ffffff">
-  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;display=swap">
@@ -14,9 +15,9 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <main class="app">
+  <main class="app" id="app" data-view="lobby">
     <header class="top">
-      <h1 class="brand">Load &amp; Clash</h1>
+      <p class="brand"><img class="brand-mark" src="/favicon.png" alt="" width="32" height="32"><span>Hex Men</span></p>
       <div class="roomtag" id="roomtag" hidden>
         <span>Room <strong id="roomcode"></strong></span>
         <button type="button" class="quiet" id="btn-leave">Leave</button>
@@ -29,18 +30,21 @@
     <!-- Home: create or join a room -->
     <section id="view-lobby" class="view lobby" aria-label="Start or join a game">
       <div class="hero">
-        <div class="meter hero-meter" id="hero-meter" role="img" aria-label="A score meter from 1 to 12. Attacks unlock at 1, 2, 3, 4, 5, 7, 10 and 12."></div>
-        <ul class="legend" aria-label="Defense colors">
-          <li><i class="dot mag"></i>Mag</li>
-          <li><i class="dot nv"></i>N.V</li>
-          <li><i class="dot shield"></i>Shield</li>
-          <li><i class="dot rebound"></i>Rebound</li>
-        </ul>
-        <p class="lead">Load to build your score. Each notch unlocks an attack, and its color shows the defense that answers it. You get 5 seconds to choose each round.</p>
+        <h1 class="hero-title"><img class="hero-logo" src="/img/logo.png" alt="Hex Men" width="480" height="584"></h1>
+        <div class="hero-copy">
+          <p class="lead">Load to build your score. Each notch unlocks an attack, and its color shows the defense that answers it. You get 5 seconds to choose each round.</p>
+          <div class="meter hero-meter" id="hero-meter" role="img" aria-label="A score meter from 1 to 12. Attacks unlock at 1, 2, 3, 4, 5, 7, 10 and 12."></div>
+          <ul class="legend" aria-label="Defense colors">
+            <li><i class="dot mag"></i>Mag</li>
+            <li><i class="dot nv"></i>N.V</li>
+            <li><i class="dot shield"></i>Shield</li>
+            <li><i class="dot rebound"></i>Rebound</li>
+          </ul>
+        </div>
       </div>
 
       <div class="form">
-        <p id="invite-note" class="invite" hidden>You've been invited to room <strong id="invite-code"></strong>. Enter your name and join.</p>
+        <p id="invite-note" class="invite" hidden>You've been invited to <span id="invite-kind">room</span> <strong id="invite-code"></strong>. Enter your name and join.</p>
 
         <div class="field">
           <label for="name">Your name</label>
@@ -48,8 +52,37 @@
         </div>
 
         <div id="create-block" class="block">
+          <fieldset class="seg-field">
+            <legend>Game mode</legend>
+            <div class="seg">
+              <label class="seg-opt"><input type="radio" name="mode" value="1v1" checked><span>1v1</span></label>
+              <label class="seg-opt"><input type="radio" name="mode" value="team"><span>Team vs Team</span></label>
+            </div>
+          </fieldset>
+
+          <div id="team-options" class="team-options" hidden>
+            <fieldset class="seg-field">
+              <legend>Team size</legend>
+              <div class="seg">
+                <label class="seg-opt"><input type="radio" name="size" value="2" checked><span>2v2</span></label>
+                <label class="seg-opt"><input type="radio" name="size" value="3"><span>3v3</span></label>
+                <label class="seg-opt"><input type="radio" name="size" value="4"><span>4v4</span></label>
+              </div>
+            </fieldset>
+
+            <div class="field">
+              <label for="target">Wins a team needs</label>
+              <div class="stepper">
+                <button type="button" class="step" id="target-down" aria-label="One fewer win">&minus;</button>
+                <input id="target" type="number" min="7" max="25" step="1" value="10" inputmode="numeric">
+                <button type="button" class="step" id="target-up" aria-label="One more win">+</button>
+              </div>
+              <p class="hint" id="target-hint">Pick 7 to 25. The first team to win that many matches takes the game.</p>
+            </div>
+          </div>
+
           <button id="btn-create" class="primary" type="button">Create room</button>
-          <p class="hint">You'll get a link to send to your opponent.</p>
+          <p class="hint" id="create-hint">You'll get a link to send to your opponent.</p>
         </div>
 
         <form id="join-form" class="block" autocomplete="off">
@@ -65,7 +98,7 @@
       </div>
     </section>
 
-    <!-- Waiting room: both players gather here. The guest gets ready, the host starts. -->
+    <!-- Waiting room (1v1): both players gather here. The guest gets ready, the host starts. -->
     <section id="view-room" class="view room" hidden aria-label="Waiting room">
       <h2>Waiting room</h2>
 
@@ -97,8 +130,14 @@
       </div>
     </section>
 
-    <!-- The match -->
+    <!-- Team vs Team: the team lobby, the order screen, the match lobby and the end screen.
+         The script fills this in. -->
+    <section id="view-team" class="view team" hidden aria-label="Team game"></section>
+
+    <!-- The match (1v1, and each game inside a team match) -->
     <section id="view-game" class="view game" hidden aria-label="Game">
+      <div id="team-strip" class="team-strip" hidden></div>
+
       <div id="banner" class="banner" hidden>
         <h2 id="banner-title"></h2>
         <p id="banner-text"></p>
@@ -114,30 +153,30 @@
           </div>
           <p id="status" class="status" role="status"></p>
 
-          <!-- Defend menu on the left, Load in the middle, Attack menu on the right. -->
+          <!-- Defend wheel on the left, Load in the middle, Attack wheel on the right. -->
           <div id="picker" class="picker">
-            <div class="dd dd-def" id="dd-def">
-              <button type="button" class="dd-trigger" id="trig-def" aria-haspopup="listbox" aria-expanded="false" aria-controls="menu-def">
-                <span class="dd-label">Defend <kbd aria-hidden="true" id="key-def"></kbd></span>
-                <span class="dd-value"><span class="dd-pick" id="pick-def">Choose</span><i class="caret" aria-hidden="true"></i></span>
-              </button>
-              <div class="menu" id="menu-def" role="listbox" aria-label="Defenses" hidden></div>
-            </div>
+            <button type="button" class="wt wt-def" id="trig-def" aria-haspopup="menu" aria-expanded="false" aria-controls="wheel">
+              <span class="wt-label">Defend <kbd aria-hidden="true" id="key-def"></kbd></span>
+              <span class="wt-value">
+                <span class="wt-art" id="art-def"></span>
+                <span class="wt-pick" id="pick-def">Choose</span>
+              </span>
+            </button>
 
             <div class="load-wrap" id="g-load"></div>
 
-            <div class="dd dd-atk" id="dd-atk">
-              <button type="button" class="dd-trigger" id="trig-atk" aria-haspopup="listbox" aria-expanded="false" aria-controls="menu-atk">
-                <span class="dd-label">Attack <kbd aria-hidden="true" id="key-atk"></kbd></span>
-                <span class="dd-value"><span class="dd-pick" id="pick-atk">Choose</span><i class="caret" aria-hidden="true"></i></span>
-              </button>
-              <div class="menu" id="menu-atk" role="listbox" aria-label="Attacks" hidden></div>
-            </div>
+            <button type="button" class="wt wt-atk" id="trig-atk" aria-haspopup="menu" aria-expanded="false" aria-controls="wheel">
+              <span class="wt-label">Attack <kbd aria-hidden="true" id="key-atk"></kbd></span>
+              <span class="wt-value">
+                <span class="wt-art" id="art-atk"></span>
+                <span class="wt-pick" id="pick-atk">Choose</span>
+              </span>
+            </button>
           </div>
           <p id="tip" class="tip"></p>
 
           <div class="lockbar" id="lockbar">
-            <p id="selection" class="selection">Choose a move</p>
+            <p id="selection" class="selection"><span class="sel-art" id="sel-art"></span><span id="sel-text">Choose a move</span></p>
             <button id="btn-lock" class="primary" type="button" disabled>Lock in <kbd>Enter</kbd></button>
           </div>
         </div>
@@ -154,12 +193,14 @@
             </div>
             <div class="clash" id="clash" hidden>
               <div class="played you">
-                <span class="who">You</span>
+                <span class="who" id="rv-you-name">You</span>
+                <span class="art" id="rv-you-art"></span>
                 <strong class="mv" id="rv-you"></strong>
               </div>
               <span class="vs">vs</span>
               <div class="played opp">
                 <span class="who" id="rv-opp-name"></span>
+                <span class="art" id="rv-opp-art"></span>
                 <strong class="mv" id="rv-opp"></strong>
               </div>
             </div>
@@ -176,5 +217,21 @@
       </details>
     </footer>
   </main>
+
+  <!-- The wheel menu. It opens over the game when you press Defend or Attack. -->
+  <div id="wheel" class="wheel-layer" hidden>
+    <div class="wheel-backdrop"></div>
+    <div class="wheel-box">
+      <div class="wheel" role="menu">
+        <div class="wheel-hub">
+          <p class="hub-name"></p>
+          <p class="hub-sub"></p>
+          <p class="hub-note"></p>
+        </div>
+      </div>
+      <p class="wheel-tip" id="wheel-tip"></p>
+      <button type="button" class="secondary wheel-close" id="wheel-close">Close <kbd aria-hidden="true">Esc</kbd></button>
+    </div>
+  </div>
 </body>
 </html>

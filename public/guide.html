@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How to play Hex Men</title>
-  <meta name="description" content="Join a game and learn the rules of Hex Men, in 1v1 or Team vs Team, in two minutes.">
+  <meta name="description" content="Join a game and learn the rules of Hex Men, in 1v1, Team vs Team or Tournament, in two minutes.">
   <meta name="theme-color" content="#ffffff">
   <link rel="icon" href="/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -19,7 +19,7 @@
     <header class="guide-head">
       <a class="back textlink" href="/">Back to the game</a>
       <h1>How to play Hex Men</h1>
-      <p class="lead">A duel for two players, or a battle between two teams. Build up points, unlock stronger attacks, and pick the right defense before the 5-second timer runs out.</p>
+      <p class="lead">A duel for two players, a battle between two teams, or a bracket tournament. Build up points, unlock stronger attacks, and pick the right defense before the 5-second timer runs out.</p>
     </header>
 
     <section aria-labelledby="g-join">
@@ -37,9 +37,9 @@
     <section aria-labelledby="g-host">
       <h2 id="g-host">If you are the host</h2>
       <ol class="steps">
-        <li>Type your name, choose <strong>1v1</strong> or <strong>Team vs Team</strong>, and tap <strong>Create room</strong>.</li>
+        <li>Type your name, choose <strong>1v1</strong>, <strong>Team vs Team</strong> or <strong>Tournament</strong>, and tap <strong>Create room</strong>.</li>
         <li>Send the invite link (or the 5-letter room code) to your friends.</li>
-        <li>In a 1v1 room, <strong>Start match</strong> switches on only when your friend has pressed <strong>Ready</strong>. For a team game, see <a class="textlink" href="#g-team">Team vs Team</a> below.</li>
+        <li>In a 1v1 room, <strong>Start match</strong> switches on only when your friend has pressed <strong>Ready</strong>. For a team game, see <a class="textlink" href="#g-team">Team vs Team</a> below. For a bracket, see <a class="textlink" href="#g-tour">Tournament</a>.</li>
       </ol>
     </section>
 
@@ -58,7 +58,7 @@
     <section aria-labelledby="g-moves">
       <h2 id="g-moves">Your moves</h2>
       <ul class="plain">
-        <li><span class="rule-name"><img class="rule-art" src="/img/moves/load.png" alt="" width="28" height="28">Load</span> adds 1 point to your score.</li>
+        <li><span class="rule-name"><img class="rule-art" src="/img/moves/load.png" alt="" width="28" height="28">Load</span> adds 1 point to your score. If the other player uses <strong>Rebound</strong> in the same round, Load adds <strong>2 points</strong> instead.</li>
         <li><strong>Defend</strong> with Mag, N.V, Shield or Rebound. You can use any defense at any time.</li>
         <li><strong>Attack</strong> once your score has reached the attack's number. Everyone starts at 0, so you have to Load first.</li>
       </ul>
@@ -113,6 +113,7 @@
         <li><strong>Touch E</strong> against <strong>Rebound</strong>: the two scores are swapped.</li>
         <li><strong>Touch E</strong> against any other defense, or against Load: the Touch E player takes the other player's whole score.</li>
         <li><strong>Touch E</strong> against any other attack: the Touch E player loses.</li>
+        <li><strong>Load</strong> against <strong>Rebound</strong>: the Load player gets <strong>2 points</strong> instead of 1. Rebound does nothing here, so the Rebound player gets nothing.</li>
         <li>Both players attack: the bigger attack wins the game. If both use the same attack, each of you loses that many points and the game goes on.</li>
       </ul>
     </section>
@@ -130,6 +131,21 @@
         <li>The <strong>winner</strong> of each 1v1 game stays on and scores <strong>1 point</strong> for their team. The loser's team sends its next player, and after the last player it starts again from Player 1.</li>
         <li>The first team to reach the wins needed takes the game. Then you can <strong>Play again</strong> with the same teams.</li>
         <li>Leaving a game in progress counts as a loss for your match. A team with nobody left loses the game.</li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="g-tour">
+      <h2 id="g-tour">Tournament</h2>
+      <p class="lead small">4 or 8 players are placed in a random bracket and play matches until one player is left.</p>
+      <ol class="steps">
+        <li>The host picks <strong>Tournament</strong>, <strong>4 or 8 players</strong>, and the match length: <strong>best of 3</strong> (win 2 duels) or <strong>best of 5</strong> (win 3 duels). A <strong>duel</strong> is one full game, played until someone wins.</li>
+        <li>Everyone joins from the link and presses <strong>Ready</strong>. When the room is full and everyone is ready, the <strong>bracket is drawn at random</strong>.</li>
+        <li>On the <strong>bracket screen</strong>, the two players in the first match press <strong>Ready</strong>. Everyone else <strong>watches</strong> the match until it is their turn.</li>
+        <li>Between duels of the same match, both players see the duel score and the winning round of the last duel, and press <strong>Ready</strong> again.</li>
+        <li>With <strong>8 players</strong> there are two groups of 4. Both groups play at the same time and move on in step. Once your match is over you can watch the other group's match. The two group winners meet in the grand final.</li>
+        <li>After every round of matches the <strong>bracket screen</strong> shows the results, and the players who are up next press <strong>Ready</strong>.</li>
+        <li>The last player standing gets the <strong>Congratulations</strong> screen. Everyone can then press <strong>Play again</strong> for a new random bracket.</li>
+        <li>Leaving a tournament counts as a loss for your current match, and your opponent moves on.</li>
       </ol>
     </section>
 

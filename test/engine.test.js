@@ -62,9 +62,24 @@ test('both players Load: both gain a point', () => {
   assert.equal(r.kind, 'quiet');
 });
 
-test('Load against a defense: only the loader gains', () => {
+test('Load against Mag, N.V or Shield: only the loader gains 1', () => {
   assert.deepEqual(resolveRound(['load', 'shield'], [2, 2]).scores, [3, 2]);
   assert.deepEqual(resolveRound(['mag', 'load'], [2, 2]).scores, [2, 3]);
+  assert.deepEqual(resolveRound(['load', 'nv'], [0, 4]).scores, [1, 4]);
+});
+
+test('Load against Rebound: the loader gains 2 instead of 1', () => {
+  const r = resolveRound(['load', 'rebound'], [2, 2]);
+  assert.deepEqual(r.scores, [4, 2]);
+  assert.equal(r.kind, 'quiet');
+  assert.equal(r.finished, false);
+  assert.deepEqual(resolveRound(['rebound', 'load'], [2, 5]).scores, [2, 7]);
+  assert.deepEqual(resolveRound(['load', 'rebound'], [0, 0]).scores, [2, 0]);
+});
+
+test('Rebound against Rebound or against Load never changes the Rebound player', () => {
+  assert.deepEqual(resolveRound(['rebound', 'rebound'], [3, 3]).scores, [3, 3]);
+  assert.deepEqual(resolveRound(['load', 'load'], [3, 3]).scores, [4, 4]);
 });
 
 test('two defenses change nothing', () => {

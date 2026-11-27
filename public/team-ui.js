@@ -3,11 +3,11 @@
 // view per player (see src/team.js), and everything here just draws it.
 
 import { $, h, moveIcon, plural } from './dom.js';
+import { captureFocus, chip, heading, inviteBlock, nameBlock, resetCopied, restoreFocus, tag } from './ui-bits.js';
 
 let ctx = null; // { act(action, body) -> Promise<boolean>, teamOptions, getSession(), onLeave(), moveName(id), moveColor(id), describeRound(entry, names) }
 let draftName = null; // text typed in the team-name box and not saved yet
 let draftTeam = null;
-let copiedAt = 0;
 
 export function init(context) {
   ctx = context;
@@ -16,7 +16,7 @@ export function init(context) {
 export function reset() {
   draftName = null;
   draftTeam = null;
-  copiedAt = 0;
+  resetCopied();
   $('#view-team').replaceChildren();
   const strip = $('#team-strip');
   strip.hidden = true;
@@ -35,43 +35,6 @@ function tint(el, colorId) {
   return el;
 }
 
-const tag = (text, cls = '') => h('span', { class: cls ? `tag ${cls}` : 'tag', text });
-
-/** A player's name with small tags for You, Host and Offline. */
-function nameBlock(p) {
-  return h(
-    'span',
-    { class: 'p-name' },
-    h('span', { class: 'p-text', text: p.name }),
-    p.isYou ? tag('You', 'you') : null,
-    p.isHost ? tag('Host') : null,
-    p.online === false ? tag('Offline', 'away') : null,
-  );
-}
-
-const chip = (text, kind = '') => h('span', { class: kind ? `state ${kind}` : 'state', text });
-
-/** Keep keyboard focus on the same control after the screen is redrawn. */
-function captureFocus(root) {
-  const el = document.activeElement;
-  if (!el || !root.contains(el) || !el.dataset || !el.dataset.fk) return null;
-  return { fk: el.dataset.fk, start: el.selectionStart, end: el.selectionEnd };
-}
-
-function restoreFocus(saved, root) {
-  if (!saved) return;
-  const el = root.querySelector(`[data-fk="${CSS.escape(saved.fk)}"]`);
-  if (!el || el.disabled) return;
-  el.focus({ preventScroll: true });
-  if (saved.start != null && typeof el.setSelectionRange === 'function') {
-    try {
-      el.setSelectionRange(saved.start, saved.end);
-    } catch {
-      /* not a text box */
-    }
-  }
-}
-
 const members = (s) => s.teams.flatMap((t) => t.members);
 
 function progress(s) {
@@ -84,10 +47,6 @@ function progress(s) {
       h('li', { class: i === at ? 'now' : i < at ? 'done' : '', 'aria-current': i === at ? 'step' : null }, h('span', { class: 'n', text: i + 1 }), label),
     ),
   );
-}
-
-function heading(title, hint) {
-  return h('header', { class: 't-head' }, h('h2', { text: title }), hint ? h('p', { class: 'hint', text: hint }) : null);
 }
 
 /** The coloured top of a team panel. */
@@ -169,39 +128,9 @@ function styleBlock(s, teamIndex) {
 
 // ------------------------------------------------------------ team lobby ----
 
-async function copyInvite(input, button) {
-  let copied = false;
-  try {
-    await navigator.clipboard.writeText(input.value);
-    copied = true;
-  } catch {
-    input.select();
-    try {
-      copied = document.execCommand('copy');
-    } catch {
-      copied = false;
-    }
-  }
-  copiedAt = Date.now();
-  button.textContent = copied ? 'Copied' : 'Press Ctrl+C to copy';
-  setTimeout(() => {
-    button.textContent = 'Copy link';
-  }, 1800);
-}
-
 function invitePanel(s) {
   const joined = members(s).length + s.waiting.length;
-  if (joined >= s.capacity) return null;
-  const input = h('input', { type: 'text', readonly: true, 'aria-label': 'Invite link', value: `${location.origin}/#${s.code}` });
-  input.addEventListener('focus', () => input.select());
-  const button = h('button', { type: 'button', class: 'secondary', text: Date.now() - copiedAt < 1800 ? 'Copied' : 'Copy link', 'data-fk': 'copy' });
-  button.addEventListener('click', () => copyInvite(input, button));
-  return h(
-    'div',
-    { class: 'invite-block' },
-    h('p', {}, `${s.capacity - joined} more ${s.capacity - joined === 1 ? 'player' : 'players'} can join. Send this link, or give them the room code `, h('strong', { text: s.code }), '.'),
-    h('div', { class: 'copyrow' }, input, button),
-  );
+  return joined >= s.capacity ? null : inviteBlock(s.code, s.capacity - joined);
 }
 
 function waitingPanel(s) {

@@ -13,9 +13,11 @@
 // locked in when it runs out plays Load. The timer only runs while both
 // players are connected, so a dropped connection never costs anyone a game.
 //
-// Two kinds of room share this server. A one-on-one room (the code below) has
-// a host and one guest. A team room (rules in src/team.js, glue at the bottom
-// of the API section) holds 4, 6 or 8 players split into two teams.
+// Three kinds of room share this server. A one-on-one room (the code below)
+// has a host and one guest. A team room (rules in src/team.js) holds 4, 6 or 8
+// players split into two teams. A tournament room (rules in src/tournament.js)
+// holds 4 or 8 players in a knock-out bracket. Team and tournament rooms share
+// the glue at the bottom of the API section.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -30,6 +32,7 @@ import {
   rulesForClient,
 } from './src/engine.js';
 import * as Team from './src/team.js';
+import * as Tournament from './src/tournament.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -68,10 +71,18 @@ function makePlayer(name) {
   return { token: randomBytes(16).toString('hex'), name, streams: new Set(), lastPoll: 0, awaySince: null };
 }
 
-const isClosed = (room) => (room.mode === 'team' ? room.stage : room.status) === 'closed';
+/** Rooms that hold a group of players: team and tournament rooms. Each has a rules module. */
+const GROUP_MODES = { team: Team, tournament: Tournament };
+const isGroupRoom = (room) => room.mode !== '1v1';
 
-/** Team rooms ask this server who is online and what time it is. */
-const teamCtx = (now = Date.now()) => ({ now, online: (player) => isConnected(player, now) });
+const isClosed = (room) => (isGroupRoom(room) ? room.stage : room.status) === 'closed';
+
+/** Group rooms ask this server who is online, what time it is, and for random numbers. */
+const groupCtx = (now = Date.now()) => ({
+  now,
+  online: (player) => isConnected(player, now),
+  random: (n) => randomInt(n),
+});
 
 function playerByToken(room, token) {
   if (typeof token !== 'string' || token.length === 0) return null;
@@ -130,6 +141,15 @@ function createTeamRoomWithHost(hostName, size, target) {
   const room = Team.createTeamRoom({ code, size, target, roundMs: ROUND_MS }); // throws on bad options
   const host = makePlayer(hostName);
   Team.addPlayer(room, host);
+  rooms.set(code, room);
+  return { room, player: host };
+}
+
+function createTournamentRoomWithHost(hostName, size, bestOf) {
+  const code = newCode();
+  const room = Tournament.createTournamentRoom({ code, size, bestOf, roundMs: ROUND_MS }); // throws on bad options
+  const host = makePlayer(hostName);
+  Tournament.addPlayer(room, host);
   rooms.set(code, room);
   return { room, player: host };
 }
@@ -236,11 +256,12 @@ function send(res, payload) {
 function broadcast(room) {
   room.version += 1;
   room.lastActive = Date.now();
-  if (room.mode === 'team') {
-    const ctx = teamCtx();
+  if (isGroupRoom(room)) {
+    const ctx = groupCtx();
+    const rules = GROUP_MODES[room.mode];
     for (const player of room.players) {
       if (player.streams.size === 0) continue;
-      const view = Team.viewFor(room, player, ctx);
+      const view = rules.viewFor(room, player, ctx);
       for (const res of player.streams) send(res, view);
     }
     return;
@@ -297,8 +318,8 @@ function expireRound(room) {
  *  anyone's connection changed. Called whenever a connection opens or closes,
  *  and several times a second by tick(). */
 function updateRoom(room, now = Date.now()) {
-  if (room.mode === 'team') {
-    updateTeamRoom(room, now);
+  if (isGroupRoom(room)) {
+    updateGroupRoom(room, now);
     return;
   }
   const conn = [isConnected(room.players[0], now), isConnected(room.players[1], now)];
@@ -338,11 +359,12 @@ function updateRoom(room, now = Date.now()) {
   if (changed) broadcast(room);
 }
 
-/** Team rooms: tell everybody when someone's connection changes, drop players
- *  who have been gone too long, move the game on, and run the round timer. */
-function updateTeamRoom(room, now) {
+/** Team and tournament rooms: tell everybody when someone's connection changes,
+ *  drop players who have been gone too long, move the game on, and run the round timers. */
+function updateGroupRoom(room, now) {
   if (room.stage === 'closed') return;
-  const ctx = teamCtx(now);
+  const rules = GROUP_MODES[room.mode];
+  const ctx = groupCtx(now);
   let changed = false;
 
   const signature = room.players.map((p) => `${p.id}${ctx.online(p) ? '+' : '-'}`).join(' ');
@@ -356,14 +378,14 @@ function updateTeamRoom(room, now) {
     if (ctx.online(player)) player.awaySince = null;
     else if (player.awaySince === null) player.awaySince = now;
     else if (now - player.awaySince >= GUEST_AWAY_MS) {
-      Team.removePlayer(room, player.id);
+      rules.removePlayer(room, player.id);
       changed = true;
     }
   }
   if (room.stage === 'closed') return;
 
-  if (Team.advance(room, ctx)) changed = true;
-  if (Team.syncTimer(room, ctx)) changed = true;
+  if (rules.advance(room, ctx)) changed = true;
+  if (rules.syncTimer(room, ctx)) changed = true;
   if (changed) broadcast(room);
 }
 
@@ -449,7 +471,7 @@ async function handleApi(req, res, url) {
   const method = req.method;
 
   if (pathname === '/api/rules' && method === 'GET') {
-    return json(res, 200, { ...rulesForClient(), team: Team.optionsForClient() });
+    return json(res, 200, { ...rulesForClient(), team: Team.optionsForClient(), tournament: Tournament.optionsForClient() });
   }
 
   if (pathname === '/api/rooms' && method === 'POST') {
@@ -458,12 +480,16 @@ async function handleApi(req, res, url) {
     }
     if (rooms.size >= MAX_ROOMS) throw new HttpError(503, 'The server is full. Try again later.');
     const body = await readJson(req);
-    if (body.mode !== undefined && body.mode !== '1v1' && body.mode !== 'team') {
-      throw new HttpError(400, 'Choose 1v1 or Team vs Team.');
+    if (body.mode !== undefined && body.mode !== '1v1' && body.mode !== 'team' && body.mode !== 'tournament') {
+      throw new HttpError(400, 'Choose 1v1, Team vs Team or Tournament.');
     }
     if (body.mode === 'team') {
       const { room, player } = createTeamRoomWithHost(cleanName(body.name, 'Player 1'), body.size, body.target);
       return json(res, 201, { code: room.code, token: player.token, mode: 'team', id: player.id });
+    }
+    if (body.mode === 'tournament') {
+      const { room, player } = createTournamentRoomWithHost(cleanName(body.name, 'Player 1'), body.size, body.bestOf);
+      return json(res, 201, { code: room.code, token: player.token, mode: 'tournament', id: player.id });
     }
     const { room, player } = createRoom(cleanName(body.name, 'Player 1'));
     return json(res, 201, { code: room.code, token: player.token, seat: 0, mode: '1v1' });
@@ -480,7 +506,7 @@ async function handleApi(req, res, url) {
   // A closed room is still told to its guest through the open stream, but
   // nobody can use it any more.
   const room = getRoom(code);
-  if (room.mode === 'team') return handleTeamApi(req, res, url, room, action, method);
+  if (isGroupRoom(room)) return handleGroupApi(req, res, url, room, action, method);
 
   // Is the room there, and does it have space? Used by invite links. With a
   // token it also says whether that token still has a seat in the room.
@@ -613,41 +639,50 @@ async function handleApi(req, res, url) {
   throw new HttpError(405, 'Method not allowed.');
 }
 
-// ------------------------------------------------------------ team rooms ----
+// ------------------------------------------------- team and tournament rooms ----
 
-function requireTeamPlayer(room, token) {
+function requireGroupPlayer(room, token) {
   const player = playerByToken(room, token);
   if (!player) throw new HttpError(403, 'You are not a player in this room.');
   return player;
 }
 
-async function handleTeamApi(req, res, url, room, action, method) {
+/** What an invite link needs to know about a room before the person joins. */
+function inviteInfo(room, token) {
+  const started = room.stage !== (room.mode === 'team' ? 'teams' : 'lobby');
+  const rules = GROUP_MODES[room.mode];
+  const info = {
+    code: room.code,
+    mode: room.mode,
+    status: room.stage,
+    size: room.size,
+    started,
+    full: started || room.players.length >= rules.capacity(room),
+    seated: token ? Boolean(playerByToken(room, token)) : undefined,
+  };
+  if (room.mode === 'team') info.target = room.target;
+  else info.bestOf = room.bestOf;
+  return info;
+}
+
+async function handleGroupApi(req, res, url, room, action, method) {
+  const rules = GROUP_MODES[room.mode];
+
   // Invite links ask whether there is a free place. With a token, whether that token still has one.
   if (!action && method === 'GET') {
-    const token = url.searchParams.get('token');
-    const started = room.stage !== 'teams';
-    return json(res, 200, {
-      code: room.code,
-      mode: 'team',
-      status: room.stage,
-      size: room.size,
-      target: room.target,
-      started,
-      full: started || room.players.length >= Team.capacity(room),
-      seated: token ? Boolean(playerByToken(room, token)) : undefined,
-    });
+    return json(res, 200, inviteInfo(room, url.searchParams.get('token')));
   }
 
   if (action === 'join' && method === 'POST') {
     const body = await readJson(req);
     const guest = makePlayer(cleanName(body.name, `Player ${room.players.length + 1}`));
-    Team.addPlayer(room, guest);
+    rules.addPlayer(room, guest);
     broadcast(room);
-    return json(res, 200, { code: room.code, token: guest.token, mode: 'team', id: guest.id });
+    return json(res, 200, { code: room.code, token: guest.token, mode: room.mode, id: guest.id });
   }
 
   if (action === 'events' && method === 'GET') {
-    const player = requireTeamPlayer(room, url.searchParams.get('token'));
+    const player = requireGroupPlayer(room, url.searchParams.get('token'));
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-store, no-transform',
@@ -657,7 +692,7 @@ async function handleTeamApi(req, res, url, room, action, method) {
     res.write(`retry: 2000\n:${' '.repeat(2048)}\n\n`);
     player.streams.add(res);
     updateRoom(room); // tells the others this player is connected
-    send(res, Team.viewFor(room, player, teamCtx()));
+    send(res, rules.viewFor(room, player, groupCtx()));
     req.on('close', () => {
       player.streams.delete(res);
       if (rooms.get(room.code) === room) updateRoom(room);
@@ -666,54 +701,61 @@ async function handleTeamApi(req, res, url, room, action, method) {
   }
 
   if (action === 'state' && method === 'GET') {
-    const player = requireTeamPlayer(room, url.searchParams.get('token'));
+    const player = requireGroupPlayer(room, url.searchParams.get('token'));
     player.lastPoll = Date.now();
     updateRoom(room);
     const since = Number(url.searchParams.get('v'));
     if (since === room.version) return json(res, 200, { unchanged: true, serverNow: Date.now() });
-    return json(res, 200, Team.viewFor(room, player, teamCtx()));
+    return json(res, 200, rules.viewFor(room, player, groupCtx()));
   }
 
   if (method !== 'POST') throw new HttpError(405, 'Method not allowed.');
   const body = await readJson(req);
-  const player = requireTeamPlayer(room, body.token);
-  const ctx = teamCtx();
+  const player = requireGroupPlayer(room, body.token);
+  const ctx = groupCtx();
 
+  const onlyTeam = () => {
+    if (room.mode !== 'team') throw new HttpError(405, 'Method not allowed.');
+  };
   switch (action) {
     case 'team':
+      onlyTeam();
       Team.chooseTeam(room, player.id, body.team);
       break;
     case 'ready':
-      Team.setReady(room, player.id, body.ready);
+      rules.setReady(room, player.id, body.ready);
       break;
     case 'style':
+      onlyTeam();
       Team.setStyle(room, player.id, { name: body.name, color: body.color });
       break;
     case 'order':
+      onlyTeam();
       Team.movePlayer(room, player.id, body.id, body.direction);
       break;
     case 'confirm':
+      onlyTeam();
       Team.setConfirm(room, player.id, body.confirmed);
       break;
     case 'matchready':
-      Team.setMatchReady(room, player.id, body.ready);
+      rules.setMatchReady(room, player.id, body.ready);
       break;
     case 'move':
-      Team.playMove(room, player.id, body.move, body.round, ctx);
+      rules.playMove(room, player.id, body.move, body.round, ctx);
       break;
     case 'rematch':
-      Team.requestRematch(room, player.id);
+      rules.requestRematch(room, player.id);
       break;
     case 'leave':
-      Team.removePlayer(room, player.id);
+      rules.removePlayer(room, player.id);
       break;
     default:
       throw new HttpError(405, 'Method not allowed.');
   }
 
   if (room.stage !== 'closed') {
-    Team.advance(room, ctx);
-    Team.syncTimer(room, ctx);
+    rules.advance(room, ctx);
+    rules.syncTimer(room, ctx);
   }
   broadcast(room);
   return json(res, 200, { ok: true });
@@ -793,7 +835,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     return serveStatic(req, res, url.pathname);
   } catch (err) {
-    const status = err instanceof HttpError || err instanceof Team.TeamError ? err.status : 500;
+    const status = err instanceof HttpError || err instanceof Team.TeamError || err instanceof Tournament.TournamentError ? err.status : 500;
     if (status === 500) console.error(err);
     if (res.headersSent) {
       res.end();

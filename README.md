@@ -1,6 +1,6 @@
 # Hex Men
 
-An online duel game for friends. Both players pick a move in secret each round, build up their score with **Load**, unlock stronger attacks, and try to pick the defense that stops their opponent's attack. Each round has a 5-second timer. Play a **1v1**, or a **Team vs Team** battle (2v2, 3v3 or 4v4).
+An online duel game for friends. Both players pick a move in secret each round, build up their score with **Load**, unlock stronger attacks, and try to pick the defense that stops their opponent's attack. Each round has a 5-second timer. Play a **1v1**, a **Team vs Team** battle (2v2, 3v3 or 4v4), or a 4 or 8 player **Tournament** with a random bracket.
 
 The game was called "Load & Clash" before. Your GitHub repository and Render service can keep their old names, because nothing in the game depends on them. Note that renaming a Render service in **Settings** only changes its name in the dashboard. Its `.onrender.com` address is fixed when the service is created. To get `hex-men.onrender.com`, see "Getting a new web address" below.
 
@@ -82,11 +82,23 @@ Render does not let you change the `.onrender.com` address of an existing servic
 
 Details worth knowing: a room holds exactly twice the team size in players. Anyone who leaves a game in progress forfeits their match, and a team with nobody left loses. A player who stays away from the waiting room or lobby for about 2 minutes is removed.
 
+## Tournament
+
+1. On the home page the host picks **Tournament**, **4 or 8 players** and the match length, **best of 3** (win 2 duels) or **best of 5** (win 3 duels). A *duel* is one full 1v1 game, played until someone wins; both players start each duel at 0.
+2. Everyone joins from the link and presses **Ready** in the tournament lobby. When the room is full and every player is ready, the bracket is drawn at random. The host is a player too, so the room holds exactly 4 or 8 people.
+3. **Bracket screen.** The two players in the first match press **Ready**; the others spectate. Before every later duel of the same match both players press **Ready** again, on the **match lobby**, which shows the duel score and the winning round of the last duel.
+4. **4 players:** Semi-final 1, Semi-final 2, then the Final.
+5. **8 players:** two groups of four (Group A and Group B). Stage 1 is the first match of each group (both start together, once all four players have pressed Ready), stage 2 is the second match of each group, stage 3 the two group finals, and stage 4 the grand final. Both groups move in step: a stage starts when everyone who is up has pressed Ready. A player whose match is over spectates the live match (their own group's first).
+6. After every stage the **bracket screen** shows the results so far and the players who are up next press **Ready**.
+7. The winner gets the **Congratulations** screen, shown to everyone. **Play again** brings everyone back to the tournament lobby for a new random draw.
+
+Details worth knowing: leaving a tournament forfeits your current or next match (your opponent gets a walkover), and when only one player is left they win. A player who stays away for about 2 minutes is removed. The 5-second timer and every game rule are the same as in 1v1.
+
 ## Rules as implemented
 
 | Move | Effect |
 | --- | --- |
-| Load | +1 to your score |
+| Load | +1 to your score (+2 if the other player used Rebound) |
 | Mag, N.V, Shield, Rebound | Defenses. Usable at any time. |
 
 | Attack | Unlocks at | Answered by |
@@ -108,6 +120,7 @@ Details worth knowing: a room holds exactly twice the team size in players. Anyo
 - **Touch E** against any other defense, or against Load: the Touch E player takes the other player's whole score (the score they had at the start of the round). The game continues.
 - **Touch E** against any other attack: the Touch E player loses.
 - Both players attack: the bigger attack wins the game. If both use the same attack (Touch E included), both lose that many points and the game continues.
+- **Load** against **Rebound**: the Load player gains **2** points instead of 1. Load against any other defense still gains 1.
 - Both players defending, or one loading while the other defends, never ends the game.
 - After a game ends, either player can ask for a rematch. It starts when both agree.
 
@@ -132,24 +145,27 @@ Details worth knowing: a room holds exactly twice the team size in players. Anyo
 
 Inside an open wheel the arrow keys move round it and pick the move, and Esc closes it.
 
-To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds (`KEYS` and `MENU_KEYS`) are at the top of `public/app.js`, and the team rules (order, rotation, scoring) are in `src/team.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
+To change any rule, edit `src/engine.js`. It is a set of pure functions, and both the server and the browser take their rules from it (the browser loads them from `/api/rules`). The key binds (`KEYS` and `MENU_KEYS`) are at the top of `public/app.js`, the team rules (order, rotation, scoring) are in `src/team.js`, the tournament rules (bracket, stages, best of) are in `src/tournament.js`, and the timer length is `ROUND_MS` in `server.js` (default 5000).
 
 ## Project layout
 
 ```
-server.js              HTTP server, 1v1 and team rooms, round timer, live updates
+server.js              HTTP server, 1v1, team and tournament rooms, round timer, live updates
 src/engine.js          the 1v1 game rules, no I/O
 src/team.js            Team vs Team rules (teams, order, rotation, scoring), no I/O
+src/tournament.js      Tournament rules (bracket draw, stages, duels, walkovers), no I/O
 public/index.html      the game page
 public/app.js          the game screen, menus, keys and results
 public/wheel.js        the Defence and Attack wheel menus
 public/team-ui.js      the Team vs Team screens
+public/tournament-ui.js the Tournament screens (lobby, bracket, match lobby, winner)
+public/ui-bits.js      small pieces shared by the team and tournament screens
 public/dom.js          small helpers and the move pictures list
 public/style.css       all the styling (white theme)
 public/guide.html      the friends guide (also at /guide), with guide.css
 public/img/            logo.png and moves/ (one picture per move)
 public/favicon.png     the browser tab icon (and apple-touch-icon.png)
-test/                  engine.test.js and team.test.js
+test/                  engine.test.js, team.test.js and tournament.test.js
 package.json           start and test commands
 ```
 
@@ -161,5 +177,5 @@ Each player's browser opens a Server-Sent Events stream to receive game state, a
 
 - **Rooms are in memory.** Restarting the server ends all games. Rooms nobody has touched for 3 hours are removed.
 - **A player's seat lives in their browser tab.** Refreshing keeps it. Closing the tab gives up the seat, because there are no accounts.
-- **No chat or match history.** In a 1v1 room it is two players only. In a team room, players who are not up watch each round once it is revealed. Only the latest round is shown on the card.
+- **No chat or match history.** In a 1v1 room it is two players only. In a team or tournament room, players who are not up watch each round once it is revealed. Only the latest round is shown on the card.
 - Run **one** server instance only, because rooms are not shared between instances.

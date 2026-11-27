@@ -3,7 +3,8 @@
 //
 // Rules, as described by the game's designer:
 //  - Two players start at score 0 and pick a move each round, in secret.
-//  - Load: your score goes up by 1.
+//  - Load: your score goes up by 1. If the other player used Rebound in the
+//    same round, it goes up by 2 instead.
 //  - Defenses (Mag, N.V, Shield, Rebound) can be used at any time.
 //  - Each attack unlocks at a score equal to its number.
 //  - If the defender uses a matching defense, the attacker's score drops by the
@@ -17,6 +18,10 @@
 //      the same attack             -> both scores drop by that attack's number;
 //      Touch E vs another attack   -> the Touch E player loses;
 //      any other two attacks       -> the bigger attack wins.
+
+// Points a Load adds, and what it adds when the other player used Rebound.
+const LOAD_GAIN = 1;
+const REBOUND_LOAD_GAIN = 2;
 
 export const LOAD = Object.freeze({ id: 'load', type: 'load', name: 'Load' });
 
@@ -163,8 +168,9 @@ export function resolveRound(moveIds, scores) {
     return finish('hit', attacker, attacker);
   }
 
-  // No attacks: only Load changes anything.
-  if (a.type === 'load') next[0] += 1;
-  if (b.type === 'load') next[1] += 1;
+  // No attacks: only Load changes anything. Load is worth 1 point, or 2 points
+  // when the other player answered it with Rebound.
+  if (a.type === 'load') next[0] += b.id === 'rebound' ? REBOUND_LOAD_GAIN : LOAD_GAIN;
+  if (b.type === 'load') next[1] += a.id === 'rebound' ? REBOUND_LOAD_GAIN : LOAD_GAIN;
   return out;
 }

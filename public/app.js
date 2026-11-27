@@ -5,6 +5,7 @@
 import { $, $$, h, plural, moveIcon, preloadMoveArt } from './dom.js';
 import { createWheel } from './wheel.js';
 import * as teamUi from './team-ui.js';
+import * as tournamentUi from './tournament-ui.js';
 
 const SESSION_KEY = 'clash.session'; // per tab, so two tabs can play each other
 const NAME_KEY = 'clash.name';
@@ -162,7 +163,7 @@ function parseHash() {
 // ---------------------------------------------------------------- views ----
 
 function showView(name) {
-  for (const view of ['lobby', 'room', 'team', 'game']) $(`#view-${view}`).hidden = view !== name;
+  for (const view of ['lobby', 'room', 'team', 'tournament', 'game']) $(`#view-${view}`).hidden = view !== name;
   $('#app').dataset.view = name;
   const inRoom = name !== 'lobby' && name !== 'none';
   $('#roomtag').hidden = !inRoom;
@@ -181,6 +182,7 @@ function goToLobby(message) {
   offlineTimer = null;
   closeMenus();
   teamUi.reset();
+  tournamentUi.reset();
   history.replaceState(null, '', location.pathname);
   $('#conn').hidden = true;
   $('#timer').hidden = true;
@@ -197,16 +199,19 @@ function syncClock(serverNow) {
   if (typeof serverNow === 'number') clockOffset = serverNow - Date.now();
 }
 
+/** Team and tournament rooms hold many players and share one kind of screen flow. */
+const isGroup = (s) => s.mode === 'team' || s.mode === 'tournament';
+
 function applyState(next) {
   pollVersion = next.version;
   syncClock(next.serverNow);
 
   if (next.status === 'closed') {
-    goToLobby(next.mode === 'team' ? 'Everyone left, so the room was closed.' : `${next.opponent.name || 'The host'} closed the room.`);
+    goToLobby(next.mode === 'team' || next.mode === 'tournament' ? 'Everyone left, so the room was closed.' : `${next.opponent.name || 'The host'} closed the room.`);
     return;
   }
   // The other player left the room (or never came back to the waiting room).
-  if (next.mode !== 'team' && state && state.mode !== 'team') {
+  if (!isGroup(next) && state && !isGroup(state)) {
     if (state.opponent.joined && !next.opponent.joined) {
       notice(`${state.opponent.name} left the room.`);
     } else if (!state.opponent.joined && next.opponent.joined) {
@@ -366,12 +371,17 @@ function createBody() {
   if (body.mode === 'team') {
     body.size = Number(document.querySelector('input[name="size"]:checked').value);
     body.target = readTarget();
+  } else if (body.mode === 'tournament') {
+    body.size = tournamentSize();
+    body.bestOf = tournamentBestOf();
   }
   saveCreateChoices(body);
   return body;
 }
 
 const selectedMode = () => document.querySelector('input[name="mode"]:checked').value;
+const tournamentSize = () => Number(document.querySelector('input[name="tsize"]:checked').value);
+const tournamentBestOf = () => Number(document.querySelector('input[name="bestof"]:checked').value);
 
 function readTarget() {
   const { minTarget, maxTarget, defaultTarget } = rules.team;
@@ -386,12 +396,16 @@ function stepTarget(delta) {
   const { minTarget, maxTarget } = rules.team;
   const next = Math.min(maxTarget, Math.max(minTarget, readTarget() + delta));
   $('#target').value = String(next);
-  saveCreateChoices({ mode: selectedMode(), size: Number(document.querySelector('input[name="size"]:checked').value), target: next });
+  saveCreateChoices({ mode: selectedMode(), size: Number(document.querySelector('input[name="size"]:checked').value), target: next, tsize: tournamentSize(), bestOf: tournamentBestOf() });
 }
 
 function saveCreateChoices(choices) {
   try {
-    localStorage.setItem(MODE_KEY, JSON.stringify({ mode: choices.mode, size: choices.size, target: choices.target }));
+    const saved = JSON.parse(localStorage.getItem(MODE_KEY) || 'null') || {};
+    // Keep what was chosen for the other modes, so switching back finds it again.
+    const next = { ...saved, mode: choices.mode };
+    for (const key of ['size', 'target', 'tsize', 'bestOf']) if (choices[key] !== undefined) next[key] = choices[key];
+    localStorage.setItem(MODE_KEY, JSON.stringify(next));
   } catch {
     /* ignore */
   }
@@ -401,7 +415,9 @@ function restoreCreateChoices() {
   try {
     const saved = JSON.parse(localStorage.getItem(MODE_KEY) || 'null');
     if (!saved) return;
-    if (saved.mode === 'team') document.querySelector('input[name="mode"][value="team"]').checked = true;
+    if (saved.mode === 'team' || saved.mode === 'tournament') document.querySelector(`input[name="mode"][value="${saved.mode}"]`).checked = true;
+    if ([4, 8].includes(saved.tsize)) document.querySelector(`input[name="tsize"][value="${saved.tsize}"]`).checked = true;
+    if ([3, 5].includes(saved.bestOf)) document.querySelector(`input[name="bestof"][value="${saved.bestOf}"]`).checked = true;
     if ([2, 3, 4].includes(saved.size)) document.querySelector(`input[name="size"][value="${saved.size}"]`).checked = true;
     const { minTarget, maxTarget } = rules.team;
     if (Number.isInteger(saved.target) && saved.target >= minTarget && saved.target <= maxTarget) $('#target').value = String(saved.target);
@@ -410,13 +426,17 @@ function restoreCreateChoices() {
   }
 }
 
-/** Show the team options only for Team vs Team, and say who the link is for. */
+/** Show the options for the chosen mode, and say who the link is for. */
 function syncCreateForm() {
-  const team = selectedMode() === 'team';
-  $('#team-options').hidden = !team;
-  $('#create-hint').textContent = team
-    ? 'You will get a link to send to your friends. Everyone joins, picks a team and gets ready.'
-    : "You'll get a link to send to your opponent.";
+  const mode = selectedMode();
+  $('#team-options').hidden = mode !== 'team';
+  $('#tournament-options').hidden = mode !== 'tournament';
+  $('#bestof-hint').textContent = `Win ${(tournamentBestOf() + 1) / 2} duels to win a match. A duel is one full game.`;
+  const hints = {
+    team: 'You will get a link to send to your friends. Everyone joins, picks a team and gets ready.',
+    tournament: `You will get a link to send to your friends. The room fills up with ${tournamentSize()} players, and the bracket is drawn at random.`,
+  };
+  $('#create-hint').textContent = hints[mode] || "You'll get a link to send to your opponent.";
 }
 
 async function createRoom() {
@@ -456,16 +476,18 @@ async function showInvite(code) {
     const info = await api(`/api/rooms/${code}`);
     if (info.full) {
       history.replaceState(null, '', location.pathname);
+      const kind = { team: 'team', tournament: 'tournament' }[info.mode];
       notice(
-        info.mode === 'team'
+        kind
           ? info.started
-            ? 'That team game has already started. Create your own room below.'
-            : 'That team room is full. Create your own room below.'
+            ? `That ${kind} has already started. Create your own room below.`
+            : `That ${kind} room is full. Create your own room below.`
           : 'That room already has two players. Create your own room below.',
       );
       return;
     }
-    $('#invite-kind').textContent = info.mode === 'team' ? `the ${info.size}v${info.size} team room` : 'room';
+    $('#invite-kind').textContent =
+      info.mode === 'team' ? `the ${info.size}v${info.size} team room` : info.mode === 'tournament' ? `the ${info.size}-player tournament` : 'room';
     $('#invite-code').textContent = code;
     $('#invite-note').hidden = false;
     $('#code').value = code;
@@ -478,12 +500,20 @@ async function showInvite(code) {
   }
 }
 
+/** Does this tournament player still have a match to play, now or later? */
+const stillInTournament = (s) => s.matches.some((m) => m.state !== 'done' && m.slots.some((slot) => slot.isYou));
+
 /** Leave for good: tell the server (the guest frees the seat, the host closes
  *  the room), then go back to the home screen. */
 function leaveRoom() {
   const mine = session;
   const playing = state && state.status === 'playing';
-  if (playing && state.mode === 'team') {
+  if (state && state.mode === 'tournament' && state.status !== 'lobby' && state.status !== 'over') {
+    const message = stillInTournament(state)
+      ? 'Leave this tournament? Your match counts as lost and your opponent moves on.'
+      : 'Leave this tournament? You stop watching.';
+    if (!window.confirm(message)) return;
+  } else if (playing && state.mode === 'team') {
     const inMatch = !state.spectating;
     const message = inMatch
       ? 'Leave this game? Your match counts as lost and you leave your team.'
@@ -843,6 +873,13 @@ function timeoutNote(entry, s) {
   return '';
 }
 
+/** One player loaded and the other defended. Load is worth 2 points against Rebound. */
+function loadText(loader, other, reply) {
+  return reply.id === 'rebound'
+    ? `${loader} loaded and gained 2 points, because ${other} used Rebound against Load.`
+    : `${loader} loaded and gained 1 point. ${other === 'you' ? 'You' : other} defended with ${reply.name}.`;
+}
+
 function describeCore(entry, s) {
   const opp = s.opponent.name;
   const youMove = moveById[entry.you];
@@ -853,8 +890,8 @@ function describeCore(entry, s) {
     case 'quiet':
       if (youMove.type === 'load' && oppMove.type === 'load') return 'Both players loaded and gained 1 point.';
       if (youMove.type !== 'load' && oppMove.type !== 'load') return 'Both players defended. Nothing changed.';
-      if (youMove.type === 'load') return `You loaded and gained 1 point. ${opp} defended with ${oppMove.name}.`;
-      return `${opp} loaded and gained 1 point. You defended with ${youMove.name}.`;
+      if (youMove.type === 'load') return loadText('You', opp, oppMove);
+      return loadText(opp, 'you', youMove);
 
     case 'blocked': {
       const attack = youAttacked ? youMove : oppMove;
@@ -928,8 +965,8 @@ function describeWatch(entry, s) {
     case 'quiet':
       if (am.type === 'load' && bm.type === 'load') return 'Both players loaded and gained 1 point.';
       if (am.type !== 'load' && bm.type !== 'load') return 'Both players defended. Nothing changed.';
-      if (am.type === 'load') return `${a} loaded and gained 1 point. ${b} defended with ${bm.name}.`;
-      return `${b} loaded and gained 1 point. ${a} defended with ${am.name}.`;
+      if (am.type === 'load') return loadText(a, b, bm);
+      return loadText(b, a, am);
     case 'blocked':
       return `${dfn} blocked ${att}'s ${atkMove.name} with ${defMove.name}. ${att} lost ${plural(entry.penalty, 'point')}.`;
     case 'hit': {
@@ -1154,9 +1191,25 @@ function renderTeamStage(s) {
   teamUi.render(s);
 }
 
+/** Tournament: the lobby, the bracket, the match lobby and the winner screen. */
+function renderTournamentStage(s) {
+  showView('tournament');
+  selected = null;
+  lastRound = null;
+  lastHistoryLength = 0;
+  offlineSince = null;
+  closeMenus();
+  $('#timer').hidden = true;
+  tournamentUi.render(s);
+}
+
 function render(s) {
   if (s.mode === 'team' && s.status !== 'playing') {
     renderTeamStage(s);
+    return;
+  }
+  if (s.mode === 'tournament' && s.status !== 'playing') {
+    renderTournamentStage(s);
     return;
   }
   if (s.status === 'waiting' || s.status === 'lobby') {
@@ -1178,6 +1231,7 @@ function render(s) {
   }
   $('#status').textContent = status;
   teamUi.renderStrip(s);
+  tournamentUi.renderStrip(s);
 
   renderReveal(s);
   lastHistoryLength = s.history.length;
@@ -1216,7 +1270,7 @@ function renderRules() {
       'Both players start at 0 and pick a move each round. Moves stay hidden until both players have locked in.',
       'You have 5 seconds each round. If you have not locked in when time runs out, Load is played for you.',
       'Press Defence or Attack to open a wheel of moves. Click or tap a move to pick it, then press Lock in. Double-click or double-tap a move to lock it in at once.',
-      'Load adds 1 point to your score.',
+      'Load adds 1 point to your score. If the other player uses Rebound in the same round, Load adds 2 points instead.',
       "You can defend at any time. If you are attacked and use a matching defense, the attacker loses points equal to the attack's number.",
       'If you are attacked and do not use a matching defense, including by loading, you lose.',
       'An attack unlocks once your score reaches its number.',
@@ -1242,6 +1296,15 @@ function renderRules() {
       'The match lobby shows both orders and the team score. The two players who are up press Ready, and everyone else watches each round once it is revealed.',
       "The winner of each 1v1 game stays on and wins a point for their team. The loser's team sends its next player, and after the last player it starts again from Player 1. The first team to reach the wins needed takes the game.",
       'Leaving a game in progress counts as a loss for your match. A team with nobody left loses the game.',
+    ),
+    h('h3', { text: 'Tournament' }),
+    list(
+      'The host picks Tournament, 4 or 8 players, and the match length: best of 3 (win 2 duels) or best of 5 (win 3 duels). A duel is one full game, played until someone wins.',
+      'When the room is full and everyone has pressed Ready, the bracket is drawn at random. With 8 players it is two groups of 4, and the group winners meet in the grand final.',
+      'The two players in a match press Ready to start. Everyone else watches. Before every duel after the first, both players press Ready again.',
+      'With 8 players, both groups play in step. A match that is over lets its players watch the other group.',
+      'After every round of matches the bracket screen shows the results, and the players who are up next press Ready.',
+      'Leaving counts as a loss for your current match, and your opponent moves on. The last player left wins. At the end, everyone sees the winner and can play again.',
     ),
     h('h3', { text: 'Keyboard' }),
     list(
@@ -1353,10 +1416,10 @@ function onKeyDown(event) {
 
 function wireEvents() {
   $('#btn-create').addEventListener('click', createRoom);
-  for (const radio of $$('input[name="mode"], input[name="size"]')) {
+  for (const radio of $$('input[name="mode"], input[name="size"], input[name="tsize"], input[name="bestof"]')) {
     radio.addEventListener('change', () => {
       syncCreateForm();
-      saveCreateChoices({ mode: selectedMode(), size: Number(document.querySelector('input[name="size"]:checked').value), target: readTarget() });
+      saveCreateChoices({ mode: selectedMode(), size: Number(document.querySelector('input[name="size"]:checked').value), target: readTarget(), tsize: tournamentSize(), bestOf: tournamentBestOf() });
     });
   }
   $('#target-down').addEventListener('click', () => stepTarget(-1));
@@ -1459,6 +1522,7 @@ async function init() {
   restoreCreateChoices();
   syncCreateForm();
 
+  tournamentUi.init({ act: teamAction, moveName, moveColor: colorOf, describeRound });
   teamUi.init({
     act: teamAction,
     teamOptions: rules.team,

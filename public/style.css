@@ -1120,3 +1120,179 @@ details summary:hover { color: var(--text); }
     transition: none !important;
   }
 }
+
+/* ---------------------------------------------------------- tournament --- */
+
+#view-tournament {
+  --team: var(--text);
+  --team-ink: var(--on-ink);
+  display: grid;
+  gap: 20px;
+  max-width: 1100px;
+}
+.panel.plain { border-top-color: var(--line); }
+
+/* The bracket: one column per round, the final on the right. Short lines join
+   a match to the one it feeds. */
+.bracket {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  gap: 28px;
+  align-items: stretch;
+}
+.bracket.cols-2 { --cols: 2; }
+.bracket.cols-3 { --cols: 3; }
+.bcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bcol-title { margin: 0; color: var(--muted); font-size: 15px; font-weight: 650; }
+.bcol-matches { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 12px; }
+
+.bm {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.bm.pending { background: var(--surface); }
+.bm.mine { border: 2px solid var(--text); padding: 9px 11px 11px; }
+.bm.live { border-color: var(--text); }
+.bcol:not(:last-child) .bm::after,
+.bcol + .bcol .bm::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  border-top: 2px solid var(--line);
+}
+.bcol:not(:last-child) .bm::after { left: 100%; }
+.bcol + .bcol .bm::before { right: 100%; }
+
+.bm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.bm-head h4 { margin: 0; font-size: 14px; font-weight: 650; color: var(--muted); overflow-wrap: anywhere; }
+.bm.mine .bm-head h4 { color: var(--text); }
+
+.bslots { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.bslot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.bm.pending .bslot { background: transparent; border-style: dashed; }
+.bslot .p-text.open { color: var(--muted); font-weight: 500; }
+.bslot.mine { border-color: var(--text); }
+.bslot.won { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, #fff); }
+.bslot.lost .p-text { color: var(--muted); font-weight: 500; }
+.bslot .bwins {
+  flex: none;
+  min-width: 1.4em;
+  text-align: right;
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.bslot.won .bwins { color: var(--ok); }
+
+.t-results { display: grid; gap: 6px; padding: 12px 14px; border-left: 6px solid var(--text); border-radius: 10px; background: var(--surface); }
+.t-results h3 { margin: 0; font-size: 16px; font-weight: 700; }
+.t-results ul { display: grid; gap: 2px; font-size: 15px; }
+
+/* Between duels */
+.duel-card .dc-name { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.duel-card .dc-wins { font-size: 56px; font-weight: 800; line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.duel-card.you { border-top-color: var(--text); }
+.duel-card:not(.you) { border-top-color: var(--line); }
+#view-tournament .duel .vs { font-size: 32px; font-weight: 600; }
+#view-tournament .last-match { border-left-color: var(--text); }
+
+/* Congratulations */
+.congrats {
+  position: relative;
+  overflow: hidden;
+  justify-items: center;
+  gap: 12px;
+  padding: 34px 20px 28px;
+  text-align: center;
+}
+.congrats > :not(.confetti) { position: relative; }
+.congrats h2 { font-size: 46px; overflow-wrap: anywhere; }
+.congrats .lead { max-width: 40ch; font-size: 20px; }
+.congrats .hint { max-width: 48ch; }
+.crown {
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 104px;
+  background: var(--on-ink);
+  color: var(--text);
+  font-size: 46px;
+  font-weight: 800;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+.confetti { position: absolute; inset: 0; pointer-events: none; }
+.confetti .bit {
+  position: absolute;
+  top: -24px;
+  left: var(--x);
+  width: var(--s);
+  height: calc(var(--s) * 1.15);
+  background: var(--shield);
+  opacity: 0;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  animation: confetti-fall 2.8s ease-in var(--d) 1 both;
+}
+.confetti .c1 { background: var(--mag); }
+.confetti .c2 { background: var(--nv); }
+.confetti .c3 { background: var(--rebound); }
+.confetti .c4 { background: #ffffff; }
+@keyframes confetti-fall {
+  0% { opacity: 0; transform: translateY(0) rotate(0); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(300px) rotate(240deg); }
+}
+
+/* The strip above a tournament duel */
+.tournament-strip { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px; align-items: stretch; }
+.ts-side {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--text);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ts-side.opp { flex-direction: row-reverse; border-top-color: var(--line); }
+.ts-name { min-width: 0; font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
+.ts-wins { font-size: 34px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.ts-mid { display: grid; align-content: center; justify-items: center; gap: 2px; font-size: 14px; text-align: center; }
+.ts-note { max-width: 36ch; }
+
+@media (max-width: 960px) {
+  .bracket { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .bcol-matches { justify-content: flex-start; }
+  .bcol:not(:last-child) .bm::after,
+  .bcol + .bcol .bm::before { display: none; }
+}
+
+@media (max-width: 640px) {
+  .congrats h2 { font-size: 34px; }
+  .congrats .lead { font-size: 18px; }
+  #view-tournament .duel .vs { font-size: 24px; }
+  .duel-card .dc-wins { font-size: 44px; }
+  .tournament-strip { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ts-mid { grid-column: 1 / -1; grid-row: 1; }
+  .ts-wins { font-size: 28px; }
+  .ts-name { font-size: 15px; }
+}
